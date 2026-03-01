@@ -1,8 +1,23 @@
+<div align="center">
+
 # WorkStream KB
 
-> **[English Documentation](README.md)**
+**업무 커뮤니케이션을 위한 AI 기반 세컨드 브레인**
 
-업무 커뮤니케이션(메일, Teams 채팅, Teams 채널)을 자동 수집하고, AI가 하루 종합 업무 리포트를 생성하여 검색 가능한 개인 지식 베이스를 구축하는 시스템.
+[![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Claude](https://img.shields.io/badge/Powered%20by-Claude-6B4FBB?logo=anthropic&logoColor=white)](https://anthropic.com)
+[![MS Graph](https://img.shields.io/badge/MS%20Graph-API-0078D4?logo=microsoft&logoColor=white)](https://learn.microsoft.com/en-us/graph/)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![GitHub Discussions](https://img.shields.io/github/discussions/SonAIengine/workstream-kb)](https://github.com/SonAIengine/workstream-kb/discussions)
+
+**메일** & **Microsoft Teams** 자동 수집 → AI **일일 업무 리포트** 생성 → 검색 가능한 **개인 지식 베이스**
+
+[시작하기](#빠른-시작) · [English Docs](README.md) · [기여 가이드](CONTRIBUTING.md) · [토론](https://github.com/SonAIengine/workstream-kb/discussions)
+
+</div>
+
+---
 
 ## 왜 만들었나
 
