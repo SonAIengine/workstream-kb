@@ -1,8 +1,23 @@
+<div align="center">
+
 # WorkStream KB
 
-> **[한국어 문서](README.ko.md)**
+**Your AI-powered second brain for work communications**
 
-Automatically collects work communications (Email, Teams Chat, Teams Channel) and generates a single comprehensive daily report using AI — building a searchable personal knowledge base.
+[![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Claude](https://img.shields.io/badge/Powered%20by-Claude-6B4FBB?logo=anthropic&logoColor=white)](https://anthropic.com)
+[![MS Graph](https://img.shields.io/badge/MS%20Graph-API-0078D4?logo=microsoft&logoColor=white)](https://learn.microsoft.com/en-us/graph/)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![GitHub Discussions](https://img.shields.io/github/discussions/SonAIengine/workstream-kb)](https://github.com/SonAIengine/workstream-kb/discussions)
+
+Auto-collect **Emails** & **Microsoft Teams** messages → AI-generated **daily work report** → searchable **personal knowledge base**
+
+[Getting Started](#quick-start) · [한국어 문서](README.ko.md) · [Contributing](CONTRIBUTING.md) · [Discussions](https://github.com/SonAIengine/workstream-kb/discussions)
+
+</div>
+
+---
 
 ## The Problem
 
