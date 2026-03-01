@@ -81,8 +81,8 @@ knowledge-base/
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/knowledge-base.git
-cd knowledge-base/scripts
+git clone https://github.com/SonAIengine/workstream-kb.git
+cd workstream-kb/scripts
 npm install
 ```
 
