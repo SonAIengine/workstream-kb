@@ -30,7 +30,9 @@
 ```markdown
 ---
 date: "{DATE}"
-sources: { teams-chat: N, teams-channel: N, mail: N }
+teams_chat: N
+teams_channel: N
+mail: N
 totalMessages: N
 ---
 # 업무 일일 리포트 - {DATE}
@@ -90,7 +92,7 @@ totalMessages: N
 - 원문을 그대로 복사하지 말고, 핵심만 압축
 - 참여자 이름은 원문 그대로 사용
 - 한국어로 작성
-- front-matter의 sources 숫자는 입력 데이터의 stats에서 가져올 것
+- front-matter의 teams_chat/teams_channel/mail 숫자는 입력 데이터의 stats에서 메시지 수를 가져올 것
 - 프로젝트별 현황의 프로젝트명은 대화 내용 기반으로 자동 식별 (chatTopic, subject 등 활용)
 
 ## 입력 데이터
