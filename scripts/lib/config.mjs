@@ -79,4 +79,4 @@ export const ARCHIVE_DIR = join(KB_ROOT, 'archive');
 // ─── Processor Settings ────────────────────────────────────────
 
 export const BATCH_SIZE = envInt('BATCH_SIZE', 100);
-export const CLAUDE_TIMEOUT_MS = envInt('CLAUDE_TIMEOUT_MS', 180000);
+export const CLAUDE_TIMEOUT_MS = envInt('CLAUDE_TIMEOUT_MS', 300000);

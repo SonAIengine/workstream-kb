@@ -485,11 +485,15 @@ async function main() {
     log('error', `index.json 업데이트 실패: ${err.message}`);
   }
 
-  // 6. inbox 정리
-  try {
-    cleanupInbox(items);
-  } catch (err) {
-    log('error', `inbox 정리 실패: ${err.message}`);
+  // 6. inbox 정리 (리포트 성공 시에만)
+  if (reportResult) {
+    try {
+      cleanupInbox(items);
+    } catch (err) {
+      log('error', `inbox 정리 실패: ${err.message}`);
+    }
+  } else {
+    log('warn', '리포트 생성 실패 — inbox 파일을 보존합니다');
   }
 
   // 7. sync-state.json 업데이트
