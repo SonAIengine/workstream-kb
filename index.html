@@ -93,8 +93,17 @@
       subMaxLevel: 2,
       homepage: 'homepage.md',
       search: {
-        maxAge: 60000,
-        paths: 'auto',
+        maxAge: 86400000,
+        paths: function() {
+          // daily/ 디렉토리의 파일만 인덱싱
+          var links = document.querySelectorAll('.sidebar-nav a[href]');
+          var paths = ['/'];
+          links.forEach(function(a) {
+            var href = a.getAttribute('href');
+            if (href && href !== '/') paths.push(href);
+          });
+          return paths;
+        },
         placeholder: '검색어를 입력하세요',
         noData: '결과 없음',
         depth: 6,
