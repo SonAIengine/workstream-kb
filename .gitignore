@@ -9,8 +9,12 @@ node_modules/
 inbox/
 projects/
 daily/
+archive/
 logs/
 index.json
+
+# Claude Code
+.claude/
 
 # Temp files
 *.tmp

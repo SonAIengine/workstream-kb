@@ -6,7 +6,7 @@
 import { writeFileSync, renameSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createLogger } from './logger.mjs';
-import { INBOX_DIR, TEAMS_CHAT_LIMIT, TEAMS_MESSAGE_LIMIT } from './config.mjs';
+import { INBOX_DIR, TEAMS_CHAT_LIMIT, TEAMS_MESSAGE_LIMIT, INITIAL_FETCH_DAYS, DATA_START_DATE } from './config.mjs';
 
 const CHAT_DIR = join(INBOX_DIR, 'teams-chat');
 const CHANNEL_DIR = join(INBOX_DIR, 'teams-channel');
@@ -30,7 +30,10 @@ export class TeamsFetcher {
     this.ensureDirectory(CHAT_DIR);
 
     const lastSync = this.syncState.getLastSync('teamsChat');
-    const filterDate = lastSync || new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const fallback = new Date(Date.now() - INITIAL_FETCH_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    const startFloor = new Date(DATA_START_DATE).toISOString();
+    const candidate = lastSync || fallback;
+    const filterDate = candidate < startFloor ? startFloor : candidate;
     this.logger.info(`Teams 채팅 가져오기 시작 (기준: ${filterDate})`);
 
     // 채팅 목록 조회
@@ -120,7 +123,10 @@ export class TeamsFetcher {
     this.ensureDirectory(CHANNEL_DIR);
 
     const lastSync = this.syncState.getLastSync('teamsChannel');
-    const filterDate = lastSync || new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const fallback = new Date(Date.now() - INITIAL_FETCH_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    const startFloor = new Date(DATA_START_DATE).toISOString();
+    const candidate = lastSync || fallback;
+    const filterDate = candidate < startFloor ? startFloor : candidate;
     this.logger.info(`Teams 채널 가져오기 시작 (기준: ${filterDate})`);
 
     // 가입된 팀 목록 조회

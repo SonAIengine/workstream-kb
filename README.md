@@ -197,12 +197,40 @@ The `.env` file controls all settings. Copy `.env.example` and edit:
 | `ATTACHMENT_MAX_SIZE_MB` | Max attachment size to download | `10` |
 | `INITIAL_FETCH_DAYS` | How many days back to fetch on first run | `7` |
 
+### Retention Policy
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DATA_START_DATE` | Earliest date to fetch data from (YYYY-MM-DD) | `2026-02-01` |
+| `ARCHIVE_AFTER_MONTHS` | Move data older than N months to `archive/` | `6` |
+
 ### Processor Settings
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `BATCH_SIZE` | Items per Claude CLI classification call | `100` |
 | `CLAUDE_TIMEOUT_MS` | Timeout for each Claude CLI invocation (ms) | `180000` |
+
+## Retention Policy
+
+Data collection starts from `DATA_START_DATE` (default: 2026-02-01). Fetchers will never retrieve data before this date, even after a sync-state reset.
+
+After `ARCHIVE_AFTER_MONTHS` months (default: 6), data is automatically moved from `projects/` and `daily/` into `archive/`:
+
+```
+archive/
+├── 제주은행/2026-02/    # 6개월 지난 프로젝트 자료
+├── XGEN-2.0/2026-02/
+└── daily/               # 6개월 지난 다이제스트
+```
+
+Run the archiver manually or via cron:
+
+```bash
+node scripts/archiver.mjs
+```
+
+The archiver updates `index.json` paths so search continues to work for archived entries.
 
 ## Key Architecture Decisions
 

@@ -68,6 +68,12 @@ export const TEAMS_MESSAGE_LIMIT = envInt('TEAMS_MESSAGE_LIMIT', 20);
 export const ATTACHMENT_MAX_SIZE_MB = envInt('ATTACHMENT_MAX_SIZE_MB', 10);
 export const INITIAL_FETCH_DAYS = envInt('INITIAL_FETCH_DAYS', 7);
 
+// ─── Retention Policy ─────────────────────────────────────────
+
+export const DATA_START_DATE = env('DATA_START_DATE', '2026-02-01');
+export const ARCHIVE_AFTER_MONTHS = envInt('ARCHIVE_AFTER_MONTHS', 6);
+export const ARCHIVE_DIR = join(KB_ROOT, 'archive');
+
 // ─── Processor Settings ────────────────────────────────────────
 
 export const BATCH_SIZE = envInt('BATCH_SIZE', 100);

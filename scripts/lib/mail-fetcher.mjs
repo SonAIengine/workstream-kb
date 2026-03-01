@@ -7,7 +7,7 @@ import TurndownService from 'turndown';
 import { writeFileSync, renameSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createLogger } from './logger.mjs';
-import { INBOX_DIR as KB_INBOX_DIR, MAIL_FETCH_LIMIT, ATTACHMENT_MAX_SIZE_MB, INITIAL_FETCH_DAYS } from './config.mjs';
+import { INBOX_DIR as KB_INBOX_DIR, MAIL_FETCH_LIMIT, ATTACHMENT_MAX_SIZE_MB, INITIAL_FETCH_DAYS, DATA_START_DATE } from './config.mjs';
 
 const INBOX_DIR = join(KB_INBOX_DIR, 'mail');
 const ATTACHMENTS_DIR = join(INBOX_DIR, 'attachments');
@@ -39,9 +39,12 @@ export class MailFetcher {
   async fetchNewMails() {
     this.ensureDirectories();
 
-    // lastSync 기준 또는 최근 7일
+    // lastSync 기준 또는 최근 INITIAL_FETCH_DAYS일 (DATA_START_DATE 이전은 무시)
     const lastSync = this.syncState.getLastSync('mail');
-    const filterDate = lastSync || new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const fallback = new Date(Date.now() - INITIAL_FETCH_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    const startFloor = new Date(DATA_START_DATE).toISOString();
+    const candidate = lastSync || fallback;
+    const filterDate = candidate < startFloor ? startFloor : candidate;
     this.logger.info(`메일 가져오기 시작 (기준: ${filterDate})`);
 
     // Graph API 호출
