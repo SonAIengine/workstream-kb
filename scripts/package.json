@@ -1,0 +1,14 @@
+{
+  "name": "knowledge-base-sync",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Personal Knowledge Base Auto-Sync System",
+  "scripts": {
+    "fetch": "node fetcher.mjs",
+    "process": "node processor.mjs"
+  },
+  "dependencies": {
+    "@azure/msal-node": "^2.16.2",
+    "turndown": "^7.2.0"
+  }
+}

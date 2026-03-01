@@ -1,0 +1,9 @@
+node_modules/
+.state/
+inbox/
+projects/
+daily/
+logs/
+index.json
+*.tmp
+*.tmp.*
