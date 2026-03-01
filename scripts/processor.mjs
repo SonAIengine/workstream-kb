@@ -18,8 +18,10 @@ import {
   unlinkSync,
   existsSync,
   appendFileSync,
+  copyFileSync,
+  rmSync,
 } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   INBOX_DIR,
@@ -282,11 +284,16 @@ function buildReportInput(rooms, dateStr) {
         content: (m.content || m.bodyPreview || m.bodyMarkdown || '').slice(0, 500),
       };
 
-      // 메일은 subject, to 추가
+      // 메일은 subject, to, attachments 추가
       if (room.roomType === 'mail') {
         if (m.subject) msg.subject = m.subject;
         const toName = m.toRecipients?.[0]?.emailAddress?.name || m.to?.name || '';
         if (toName) msg.to = toName;
+        if (m.attachments?.length > 0) {
+          msg.attachments = m.attachments
+            .filter((a) => a.savedPath && !a.skippedReason)
+            .map((a) => a.name);
+        }
       }
 
       return msg;
@@ -408,6 +415,38 @@ function updateIndex(entry) {
 }
 
 /**
+ * 메일 첨부파일을 daily/attachments/{date}/ 로 복사
+ * @returns {number} 복사된 파일 수
+ */
+function copyAttachments(items, dateStr) {
+  const attachDir = join(DAILY_DIR, 'attachments', dateStr);
+  let copied = 0;
+
+  for (const item of items) {
+    if (item._sourceType !== 'mail' || !item.attachments?.length) continue;
+
+    for (const att of item.attachments) {
+      if (!att.savedPath || att.skippedReason) continue;
+      if (!existsSync(att.savedPath)) continue;
+
+      ensureDir(attachDir);
+      const destPath = join(attachDir, basename(att.savedPath));
+      try {
+        copyFileSync(att.savedPath, destPath);
+        copied++;
+      } catch (err) {
+        log('warn', `첨부파일 복사 실패: ${att.name} - ${err.message}`);
+      }
+    }
+  }
+
+  if (copied > 0) {
+    log('info', `첨부파일 ${copied}개 복사 → daily/attachments/${dateStr}/`);
+  }
+  return copied;
+}
+
+/**
  * 처리 완료된 inbox 파일 삭제
  */
 function cleanupInbox(items) {
@@ -423,6 +462,17 @@ function cleanupInbox(items) {
       }
     }
   }
+  // inbox/mail/attachments/ 디렉토리 정리
+  const inboxAttachDir = join(INBOX_DIR, 'mail', 'attachments');
+  if (existsSync(inboxAttachDir)) {
+    try {
+      rmSync(inboxAttachDir, { recursive: true });
+      log('info', 'inbox/mail/attachments/ 정리 완료');
+    } catch (err) {
+      log('warn', `inbox 첨부파일 디렉토리 삭제 실패: ${err.message}`);
+    }
+  }
+
   log('info', `inbox 정리 완료: ${cleaned}개 파일 삭제`);
 }
 
@@ -478,14 +528,22 @@ async function main() {
     log('error', `리포트 생성 실패: ${err.message}`);
   }
 
-  // 5. index.json 업데이트
+  // 5. 첨부파일 복사
+  const today = new Date().toISOString().split('T')[0];
+  try {
+    copyAttachments(items, today);
+  } catch (err) {
+    log('error', `첨부파일 복사 실패: ${err.message}`);
+  }
+
+  // 6. index.json 업데이트
   try {
     updateIndex(reportResult);
   } catch (err) {
     log('error', `index.json 업데이트 실패: ${err.message}`);
   }
 
-  // 6. inbox 정리 (리포트 성공 시에만)
+  // 7. inbox 정리 (리포트 성공 시에만)
   if (reportResult) {
     try {
       cleanupInbox(items);
