@@ -1,4 +1,4 @@
-# Knowledge Base Auto-Sync
+# WorkStream KB
 
 ## Architecture
 

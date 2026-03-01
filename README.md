@@ -1,6 +1,6 @@
-# Knowledge Base Auto-Sync
+# WorkStream KB
 
-A personal knowledge base system that automatically collects emails and Microsoft Teams messages via the MS Graph API, classifies them into projects using Claude AI, and stores organized Markdown documents for easy searching.
+업무 커뮤니케이션(메일, Teams)을 자동 수집하고 AI로 분류/요약하여 검색 가능한 지식 베이스를 구축하는 시스템.
 
 ## Why This Exists
 
