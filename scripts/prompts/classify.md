@@ -1,33 +1,29 @@
-# 지식 베이스 항목 분류
+# Knowledge Base Item Classification
 
-아래 JSON 배열의 각 항목을 적절한 프로젝트로 분류하고 요약해주세요.
+Classify each item in the JSON array below into the appropriate project, and provide a summary.
 
-## 프로젝트 목록
-- 제주은행: 제주은행 관련 업무
-- XGEN-2.0: XGEN 2.0 플랫폼 개발
-- 대명: 대명리조트/소노호텔 프로젝트
-- EC솔루션연구소: EC솔루션연구소 관련
-- _general: 위 프로젝트에 해당하지 않는 일반 항목
+## Project List
+{PROJECTS}
 
-## 분류 기준
-1. 제목, 본문, 보낸 사람 도메인으로 프로젝트 판단
-2. 확실하지 않으면 _general로 분류
-3. 하나의 항목이 여러 프로젝트에 관련될 수 있음 (주 프로젝트 하나만 선택)
+## Classification Rules
+1. Determine the project based on subject, body preview, and sender domain/keywords
+2. If unsure, classify as _general
+3. One item belongs to one primary project only
 
-## 응답 형식 (JSON)
-각 항목에 대해 다음 형식으로 응답:
+## Response Format (JSON)
+Respond with a JSON array in this exact format:
 ```json
 [
   {
-    "id": "원본 id",
-    "project": "프로젝트명",
-    "title": "간결한 제목 (한국어)",
-    "summary": "2-3문장 요약 (한국어)",
-    "tags": ["태그1", "태그2"],
+    "id": "original id",
+    "project": "project name from list above",
+    "title": "concise title",
+    "summary": "2-3 sentence summary",
+    "tags": ["tag1", "tag2"],
     "importance": "high|medium|low"
   }
 ]
 ```
 
-## 입력 데이터
+## Input Data
 {INPUT}

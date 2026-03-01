@@ -4,14 +4,13 @@
  */
 
 import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { homedir } from 'node:os';
+import { dirname } from 'node:path';
 import { createLogger } from './logger.mjs';
+import { SYNC_STATE_FILE, STATE_DIR } from './config.mjs';
 
 const logger = createLogger('SyncState');
 
-const STATE_DIR = join(homedir(), 'knowledge-base', '.state');
-const STATE_PATH = join(STATE_DIR, 'sync-state.json');
+const STATE_PATH = SYNC_STATE_FILE;
 
 // 초기 상태 구조
 const DEFAULT_STATE = {

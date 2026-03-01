@@ -5,36 +5,25 @@
 
 import { PublicClientApplication } from '@azure/msal-node';
 import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { homedir } from 'node:os';
+import { dirname } from 'node:path';
 import { execSync } from 'node:child_process';
 import { createLogger } from './logger.mjs';
+import {
+  MS365_CLIENT_ID,
+  MS365_AUTHORITY,
+  MS365_TOKEN_CACHE_PATH,
+  MS365_SELECTED_ACCOUNT_PATH,
+  MS365_SCOPES,
+} from './config.mjs';
 
 const logger = createLogger('TokenManager');
-
-// MS365 MCP 서버와 동일한 설정
-const CONFIG_DIR = join(homedir(), '.config', 'ms-365-mcp');
-const TOKEN_CACHE_PATH = join(CONFIG_DIR, '.token-cache.json');
-const SELECTED_ACCOUNT_PATH = join(CONFIG_DIR, '.selected-account.json');
-
-const CLIENT_ID = '084a3e9f-a9f4-43f7-89f9-d229cf97853e';
-const AUTHORITY = 'https://login.microsoftonline.com/common';
-const SCOPES = [
-  'Mail.ReadWrite',
-  'Chat.Read',
-  'ChatMessage.Read',
-  'Team.ReadBasic.All',
-  'Channel.ReadBasic.All',
-  'ChannelMessage.Read.All',
-  'User.Read',
-];
 
 export class TokenManager {
   constructor() {
     this.msalApp = new PublicClientApplication({
       auth: {
-        clientId: CLIENT_ID,
-        authority: AUTHORITY,
+        clientId: MS365_CLIENT_ID,
+        authority: MS365_AUTHORITY,
       },
     });
   }
@@ -44,11 +33,11 @@ export class TokenManager {
    */
   async loadTokenCache() {
     try {
-      if (!existsSync(TOKEN_CACHE_PATH)) {
-        logger.warn(`토큰 캐시 파일 없음: ${TOKEN_CACHE_PATH}`);
+      if (!existsSync(MS365_TOKEN_CACHE_PATH)) {
+        logger.warn(`토큰 캐시 파일 없음: ${MS365_TOKEN_CACHE_PATH}`);
         return;
       }
-      const data = readFileSync(TOKEN_CACHE_PATH, 'utf-8');
+      const data = readFileSync(MS365_TOKEN_CACHE_PATH, 'utf-8');
       this.msalApp.getTokenCache().deserialize(data);
       logger.debug('토큰 캐시 로드 완료');
     } catch (err) {
@@ -63,10 +52,10 @@ export class TokenManager {
   async saveTokenCache() {
     try {
       const data = this.msalApp.getTokenCache().serialize();
-      const tmpPath = TOKEN_CACHE_PATH + '.tmp';
-      mkdirSync(dirname(TOKEN_CACHE_PATH), { recursive: true });
+      const tmpPath = MS365_TOKEN_CACHE_PATH + '.tmp';
+      mkdirSync(dirname(MS365_TOKEN_CACHE_PATH), { recursive: true });
       writeFileSync(tmpPath, data, 'utf-8');
-      renameSync(tmpPath, TOKEN_CACHE_PATH);
+      renameSync(tmpPath, MS365_TOKEN_CACHE_PATH);
       logger.debug('토큰 캐시 저장 완료');
     } catch (err) {
       logger.error(`토큰 캐시 저장 실패: ${err.message}`);
@@ -79,11 +68,11 @@ export class TokenManager {
    */
   readSelectedAccount() {
     try {
-      if (!existsSync(SELECTED_ACCOUNT_PATH)) {
-        logger.warn(`선택된 계정 파일 없음: ${SELECTED_ACCOUNT_PATH}`);
+      if (!existsSync(MS365_SELECTED_ACCOUNT_PATH)) {
+        logger.warn(`선택된 계정 파일 없음: ${MS365_SELECTED_ACCOUNT_PATH}`);
         return null;
       }
-      const data = readFileSync(SELECTED_ACCOUNT_PATH, 'utf-8');
+      const data = readFileSync(MS365_SELECTED_ACCOUNT_PATH, 'utf-8');
       return JSON.parse(data);
     } catch (err) {
       logger.error(`선택된 계정 읽기 실패: ${err.message}`);
@@ -141,7 +130,7 @@ export class TokenManager {
     try {
       const result = await this.msalApp.acquireTokenSilent({
         account,
-        scopes: SCOPES,
+        scopes: MS365_SCOPES,
       });
 
       // 5. 캐시 저장 (갱신된 토큰 반영)

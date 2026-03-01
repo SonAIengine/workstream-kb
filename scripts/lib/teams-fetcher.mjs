@@ -5,11 +5,11 @@
 
 import { writeFileSync, renameSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { createLogger } from './logger.mjs';
+import { INBOX_DIR, TEAMS_CHAT_LIMIT, TEAMS_MESSAGE_LIMIT } from './config.mjs';
 
-const CHAT_DIR = join(homedir(), 'knowledge-base', 'inbox', 'teams-chat');
-const CHANNEL_DIR = join(homedir(), 'knowledge-base', 'inbox', 'teams-channel');
+const CHAT_DIR = join(INBOX_DIR, 'teams-chat');
+const CHANNEL_DIR = join(INBOX_DIR, 'teams-channel');
 
 export class TeamsFetcher {
   /**
@@ -36,7 +36,7 @@ export class TeamsFetcher {
     // 채팅 목록 조회
     let chats;
     try {
-      const data = await this.graphClient.get('/me/chats', { $top: '30' });
+      const data = await this.graphClient.get('/me/chats', { $top: String(TEAMS_CHAT_LIMIT) });
       chats = data.value || [];
     } catch (err) {
       this.logger.error(`채팅 목록 조회 실패: ${err.message}`);
@@ -51,7 +51,7 @@ export class TeamsFetcher {
     for (const chat of chats) {
       try {
         // 각 채팅의 메시지 조회
-        const msgData = await this.graphClient.get(`/chats/${chat.id}/messages`, { $top: '20' });
+        const msgData = await this.graphClient.get(`/chats/${chat.id}/messages`, { $top: String(TEAMS_MESSAGE_LIMIT) });
         const messages = msgData.value || [];
 
         for (const msg of messages) {
@@ -159,7 +159,7 @@ export class TeamsFetcher {
           // 채널 메시지 조회
           const msgData = await this.graphClient.get(
             `/teams/${team.id}/channels/${channel.id}/messages`,
-            { $top: '20' }
+            { $top: String(TEAMS_MESSAGE_LIMIT) }
           );
           const messages = msgData.value || [];
 

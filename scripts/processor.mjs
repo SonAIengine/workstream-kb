@@ -20,24 +20,23 @@ import {
   existsSync,
   appendFileSync,
 } from 'node:fs';
-import { join, dirname, basename } from 'node:path';
-import { homedir } from 'node:os';
+import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import {
+  INBOX_DIR,
+  PROJECTS_DIR,
+  DAILY_DIR,
+  STATE_DIR,
+  LOGS_DIR,
+  INDEX_FILE,
+  SYNC_STATE_FILE,
+  CLAUDE_CLI_PATH as CLAUDE_CLI,
+  BATCH_SIZE,
+  CLAUDE_TIMEOUT_MS,
+  PROJECT_KEYWORDS_FILE,
+} from './lib/config.mjs';
 
-// ─── Constants ───────────────────────────────────────────────────────
-
-const KB_ROOT = join(homedir(), 'knowledge-base');
-const INBOX_DIR = join(KB_ROOT, 'inbox');
-const PROJECTS_DIR = join(KB_ROOT, 'projects');
-const DAILY_DIR = join(KB_ROOT, 'daily');
-const STATE_DIR = join(KB_ROOT, '.state');
-const LOGS_DIR = join(KB_ROOT, 'logs');
 const PROMPTS_DIR = join(dirname(new URL(import.meta.url).pathname), 'prompts');
-const CLAUDE_CLI = '/Users/sonseongjun/.local/bin/claude';
-const INDEX_FILE = join(KB_ROOT, 'index.json');
-const SYNC_STATE_FILE = join(STATE_DIR, 'sync-state.json');
-
-const BATCH_SIZE = 100;
 
 // ─── Logger (standalone, lib/ 의존 없이 독립 실행 가능) ──────────────
 
@@ -200,10 +199,19 @@ function collectInboxItems() {
  * @returns {Array} 분류 결과 배열
  */
 function classifyItems(items) {
-  const promptTemplate = readFileSync(
+  let promptTemplate = readFileSync(
     join(PROMPTS_DIR, 'classify.md'),
     'utf-8'
   );
+
+  // project-keywords.json에서 동적으로 프로젝트 목록 주입
+  if (promptTemplate.includes('{PROJECTS}')) {
+    const keywords = readJsonSafe(PROJECT_KEYWORDS_FILE, {});
+    const projectList = Object.entries(keywords)
+      .map(([name, cfg]) => `- ${name}: 키워드 [${cfg.keywords?.join(', ') || ''}]`)
+      .join('\n');
+    promptTemplate = promptTemplate.replace('{PROJECTS}', projectList + '\n- _general: 위 프로젝트에 해당하지 않는 일반 항목');
+  }
 
   // 분류에 필요한 최소 필드만 추출 (프롬프트 크기 제한)
   const cleanItems = items.map((item) => ({
@@ -235,7 +243,7 @@ function classifyItems(items) {
         '--dangerously-skip-permissions',
       ],
       {
-        timeout: 180000,
+        timeout: CLAUDE_TIMEOUT_MS,
         maxBuffer: 10 * 1024 * 1024,
         encoding: 'utf-8',
         env: getClaudeEnv(),
@@ -401,7 +409,7 @@ function generateDailyDigest(classifiedItems) {
         '--dangerously-skip-permissions',
       ],
       {
-        timeout: 180000,
+        timeout: CLAUDE_TIMEOUT_MS,
         maxBuffer: 10 * 1024 * 1024,
         encoding: 'utf-8',
         env: getClaudeEnv(),

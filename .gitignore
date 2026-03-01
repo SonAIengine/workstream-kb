@@ -1,9 +1,17 @@
+# Dependencies
 node_modules/
+
+# Environment (contains local paths)
+.env
+
+# Runtime data (personal content)
 .state/
 inbox/
 projects/
 daily/
 logs/
 index.json
+
+# Temp files
 *.tmp
 *.tmp.*

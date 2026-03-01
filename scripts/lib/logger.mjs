@@ -5,9 +5,7 @@
 
 import { appendFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
-
-const LOGS_DIR = join(homedir(), 'knowledge-base', 'logs');
+import { LOGS_DIR } from './config.mjs';
 const LEVELS = ['debug', 'info', 'warn', 'error'];
 
 // 로그 디렉토리 보장

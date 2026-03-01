@@ -1,31 +1,31 @@
-# 일일 다이제스트 생성
+# Daily Digest Generation
 
-오늘 처리된 항목들을 프로젝트별로 정리하여 일일 다이제스트를 생성해주세요.
+Organize today's processed items by project and generate a daily digest in Markdown.
 
-## 응답 형식 (Markdown)
+## Response Format (Markdown)
 
 ```markdown
-# 일일 다이제스트 - {날짜}
+# Daily Digest - {date}
 
-## 요약
-- 총 처리 항목: N건 (메일 X건, Teams Y건)
-- 프로젝트별: ...
+## Summary
+- Total items processed: N (Mail X, Teams Y)
+- By project: ...
 
-## 프로젝트별 상세
+## Project Details
 
-### 제주은행
-- **{제목}** (메일/Teams) - {요약}
+### {Project Name 1}
+- **{Title}** (mail/teams) - {summary}
 - ...
 
-### XGEN-2.0
+### {Project Name 2}
 - ...
 
-### 기타
+### Other
 - ...
 
-## 액션 아이템
-- (응답 필요한 메일이나 중요 항목 정리)
+## Action Items
+- (Items requiring response or important follow-ups)
 ```
 
-## 입력 데이터
+## Input Data
 {INPUT}

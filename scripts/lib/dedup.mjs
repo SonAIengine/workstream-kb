@@ -4,14 +4,13 @@
  */
 
 import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { homedir } from 'node:os';
+import { dirname } from 'node:path';
 import { createLogger } from './logger.mjs';
+import { PROCESSED_IDS_FILE, STATE_DIR } from './config.mjs';
 
 const logger = createLogger('DedupManager');
 
-const STATE_DIR = join(homedir(), 'knowledge-base', '.state');
-const PROCESSED_IDS_PATH = join(STATE_DIR, 'processed-ids.json');
+const PROCESSED_IDS_PATH = PROCESSED_IDS_FILE;
 
 // 타입별 최대 보관 ID 수 (FIFO 방식으로 오래된 것부터 제거)
 const MAX_IDS_PER_TYPE = 10000;

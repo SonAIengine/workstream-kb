@@ -6,14 +6,13 @@
 import TurndownService from 'turndown';
 import { writeFileSync, renameSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { createLogger } from './logger.mjs';
+import { INBOX_DIR as KB_INBOX_DIR, MAIL_FETCH_LIMIT, ATTACHMENT_MAX_SIZE_MB, INITIAL_FETCH_DAYS } from './config.mjs';
 
-const INBOX_DIR = join(homedir(), 'knowledge-base', 'inbox', 'mail');
+const INBOX_DIR = join(KB_INBOX_DIR, 'mail');
 const ATTACHMENTS_DIR = join(INBOX_DIR, 'attachments');
 
-// 첨부파일 최대 크기 (10MB)
-const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
+const MAX_ATTACHMENT_SIZE = ATTACHMENT_MAX_SIZE_MB * 1024 * 1024;
 
 // Turndown 설정
 const turndownService = new TurndownService({
@@ -48,7 +47,7 @@ export class MailFetcher {
     // Graph API 호출
     const params = {
       $filter: `receivedDateTime ge ${filterDate}`,
-      $top: '50',
+      $top: String(MAIL_FETCH_LIMIT),
       $orderby: 'receivedDateTime desc',
       $select: 'id,subject,from,toRecipients,receivedDateTime,body,bodyPreview,hasAttachments,importance',
     };
