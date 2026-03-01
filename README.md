@@ -2,6 +2,10 @@
 
 > **[한국어 문서](README.ko.md)**
 
+<img width="1670" height="1008" alt="image" src="https://github.com/user-attachments/assets/066de137-0dfe-4dcf-adea-f1932672ad37" />
+<img width="1678" height="1021" alt="image" src="https://github.com/user-attachments/assets/906799fd-df09-4c75-a15e-c163c77df551" />
+<img width="1666" height="1018" alt="image" src="https://github.com/user-attachments/assets/c34f9c21-bf8a-4eb8-a278-761c7947e841" />
+
 Automatically collects work communications (Email, Teams Chat, Teams Channel) and generates a single comprehensive daily report using AI — building a searchable personal knowledge base.
 
 ## The Problem
