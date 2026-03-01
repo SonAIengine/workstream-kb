@@ -13,7 +13,8 @@ Bash로 각 디렉토리의 파일 수 확인:
 - `find ~/workstream-kb/inbox/mail -name "*.json" 2>/dev/null | wc -l`
 - `find ~/workstream-kb/inbox/teams-chat -name "*.json" 2>/dev/null | wc -l`
 - `find ~/workstream-kb/inbox/teams-channel -name "*.json" 2>/dev/null | wc -l`
-- 각 rooms/{type}/{slug}/ 디렉토리의 .md 파일 수
+- `find ~/workstream-kb/daily -name "*.md" 2>/dev/null | wc -l`
+- `find ~/workstream-kb/archive/daily -name "*.md" 2>/dev/null | wc -l`
 
 ### 3단계: 결과 출력
 
@@ -32,12 +33,11 @@ Bash로 각 디렉토리의 파일 수 확인:
 - Teams 채팅: N건
 - Teams 채널: N건
 
-### 채팅방별 요약 수
-| 유형 | 채팅방 수 | 요약 문서 수 | 최근 업데이트 |
-|------|----------|-------------|-------------|
-| Teams 채팅 | N개 | M건 | {date} |
-| Teams 채널 | N개 | M건 | {date} |
-| 메일 | N개 | M건 | {date} |
+### 일일 리포트
+| 구분 | 리포트 수 | 최근 업데이트 |
+|------|----------|-------------|
+| Daily | N건 | {date} |
+| Archive | N건 | {date} |
 
 ### 인덱스
 - 총 항목: N건

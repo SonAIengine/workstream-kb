@@ -51,8 +51,6 @@ export const CLAUDE_CLI_PATH = expandHome(env('CLAUDE_CLI_PATH', '/usr/local/bin
 // 파생 경로
 export const SCRIPTS_DIR = join(KB_ROOT, 'scripts');
 export const INBOX_DIR = join(KB_ROOT, 'inbox');
-export const ROOMS_DIR = join(KB_ROOT, 'rooms');
-export const ROOM_MAP_FILE = join(ROOMS_DIR, '_room-map.json');
 export const DAILY_DIR = join(KB_ROOT, 'daily');
 export const STATE_DIR = join(KB_ROOT, '.state');
 export const LOGS_DIR = join(KB_ROOT, 'logs');

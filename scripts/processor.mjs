@@ -1,12 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * Knowledge Base Processor (Layer 2) - v2
- * - inbox의 메일/Teams 항목을 수집
- * - 채팅방(room)별 + 날짜별로 그룹화
- * - Claude CLI로 방별 일일 요약 생성
- * - rooms/{type}/{slug}/{date}.md 저장
- * - 전체 일일 다이제스트 생성
+ * Knowledge Base Processor (Layer 2) - v3
+ * - inbox 전체를 수집 → 채팅방별 그룹화 → 노이즈 필터링
+ * - Claude CLI 1회 호출로 하루 종합 업무 리포트 생성
+ * - daily/{date}.md 저장
  *
  * 매일 07:00 launchd로 실행
  */
@@ -25,13 +23,11 @@ import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   INBOX_DIR,
-  ROOMS_DIR,
   DAILY_DIR,
   STATE_DIR,
   LOGS_DIR,
   INDEX_FILE,
   SYNC_STATE_FILE,
-  ROOM_MAP_FILE,
   CLAUDE_CLI_PATH as CLAUDE_CLI,
   CLAUDE_TIMEOUT_MS,
   MY_DISPLAY_NAME,
@@ -51,39 +47,29 @@ function log(level, msg) {
     : console.log;
   consoleFn(line);
 
-  // 파일에도 기록
   try {
     if (!existsSync(LOGS_DIR)) mkdirSync(LOGS_DIR, { recursive: true });
     const logFile = join(LOGS_DIR, `${ts.split('T')[0]}.log`);
     appendFileSync(logFile, line + '\n', 'utf-8');
   } catch {
-    // 파일 기록 실패 시 무시 (콘솔 출력은 이미 완료)
+    // 파일 기록 실패 시 무시
   }
 }
 
 // ─── Utility Functions ───────────────────────────────────────────────
 
-/**
- * 원자적 파일 쓰기: temp 파일에 쓴 후 rename
- */
 function writeFileAtomic(filePath, content) {
   const tmpPath = filePath + '.tmp.' + Date.now();
   writeFileSync(tmpPath, content, 'utf-8');
   renameSync(tmpPath, filePath);
 }
 
-/**
- * 디렉토리가 없으면 재귀적으로 생성
- */
 function ensureDir(dirPath) {
   if (!existsSync(dirPath)) {
     mkdirSync(dirPath, { recursive: true });
   }
 }
 
-/**
- * JSON 파일을 안전하게 읽기 (파싱 실패 시 기본값 반환)
- */
 function readJsonSafe(filePath, defaultValue) {
   try {
     if (!existsSync(filePath)) return defaultValue;
@@ -94,9 +80,6 @@ function readJsonSafe(filePath, defaultValue) {
   }
 }
 
-/**
- * Claude 응답에서 markdown 추출 (--output-format json wrapper 대응)
- */
 function extractMarkdownFromResponse(text) {
   try {
     const parsed = JSON.parse(text);
@@ -109,18 +92,12 @@ function extractMarkdownFromResponse(text) {
   return text;
 }
 
-/**
- * Claude CLI 실행용 환경변수 (중첩 세션 방지 해제)
- */
 function getClaudeEnv() {
   const env = { ...process.env };
   delete env.CLAUDECODE;
   return env;
 }
 
-/**
- * 디렉토리명용 slug 생성 (한글/영문/숫자/하이픈만 허용)
- */
 function sanitizeSlug(name) {
   return name
     .trim()
@@ -133,22 +110,10 @@ function sanitizeSlug(name) {
     .slice(0, 60) || 'unknown';
 }
 
-// ─── Room Map (chatId → slug 캐시) ──────────────────────────────────
-
-function loadRoomMap() {
-  return readJsonSafe(ROOM_MAP_FILE, {});
-}
-
-function saveRoomMap(roomMap) {
-  ensureDir(dirname(ROOM_MAP_FILE));
-  writeFileAtomic(ROOM_MAP_FILE, JSON.stringify(roomMap, null, 2));
-}
-
 // ─── Core Functions ──────────────────────────────────────────────────
 
 /**
  * inbox 디렉토리에서 모든 항목 수집
- * inbox/mail/, inbox/teams-chat/, inbox/teams-channel/ 하위의 .json 파일
  */
 function collectInboxItems() {
   const items = [];
@@ -164,7 +129,6 @@ function collectInboxItems() {
         const filePath = join(dirPath, file);
         const content = readFileSync(filePath, 'utf-8');
         const item = JSON.parse(content);
-        // 소스 정보 추가 (나중에 cleanup용)
         item._sourceFile = filePath;
         item._sourceType = subdir;
         items.push(item);
@@ -180,43 +144,27 @@ function collectInboxItems() {
 
 /**
  * 아이템들을 룸별로 그룹화
- * @returns {Map<string, {slug, displayName, roomType, dateGroups: Map<string, Array>}>}
+ * @returns {Map<string, {displayName, roomType, members: Set, messages: Array}>}
  */
 function groupByRoom(items) {
   const rooms = new Map();
-  const roomMap = loadRoomMap();
 
   for (const item of items) {
-    let roomKey, slug, displayName, roomType;
+    let roomKey, displayName, roomType;
 
     if (item._sourceType === 'teams-chat') {
       roomKey = item.chatId || item.id;
       roomType = 'teams-chat';
-
-      // 캐시된 slug가 있으면 사용
-      if (roomMap[roomKey]) {
-        slug = roomMap[roomKey].slug;
-        displayName = roomMap[roomKey].displayName;
-      } else if (item.chatTopic) {
-        // 그룹 채팅 (topic 있음)
-        slug = sanitizeSlug(item.chatTopic);
-        displayName = item.chatTopic;
-      } else {
-        // 1:1 또는 topic 없는 채팅 — 나중에 멤버 분석으로 결정
-        slug = null; // 임시, 그룹 완성 후 결정
-        displayName = null;
-      }
+      displayName = item.chatTopic || null;
     } else if (item._sourceType === 'teams-channel') {
       const teamName = item.teamName || 'unknown-team';
       const channelName = item.channelName || 'unknown-channel';
       roomKey = `${item.teamId || teamName}_${item.channelId || channelName}`;
       roomType = 'teams-channel';
-      slug = sanitizeSlug(`${teamName}_${channelName}`);
       displayName = `${teamName} / ${channelName}`;
     } else if (item._sourceType === 'mail') {
       roomKey = 'mail';
       roomType = 'mail';
-      slug = 'mail';
       displayName = '메일';
     } else {
       continue;
@@ -224,67 +172,39 @@ function groupByRoom(items) {
 
     if (!rooms.has(roomKey)) {
       rooms.set(roomKey, {
-        slug,
         displayName,
         roomType,
         members: new Set(),
-        dateGroups: new Map(),
+        messages: [],
       });
     }
 
     const room = rooms.get(roomKey);
-    // 멤버 추적
     const fromName = item.from?.name || item.from?.emailAddress?.name || '';
     if (fromName) room.members.add(fromName);
 
-    // slug/displayName 업데이트 (캐시 miss 후 topic 있는 메시지 발견 시)
-    if (!room.slug && item.chatTopic) {
-      room.slug = sanitizeSlug(item.chatTopic);
+    if (!room.displayName && item.chatTopic) {
       room.displayName = item.chatTopic;
     }
 
-    // 날짜별 그룹화
-    const dateStr = (item.receivedDateTime || item.createdDateTime || new Date().toISOString()).split('T')[0];
-    if (!room.dateGroups.has(dateStr)) {
-      room.dateGroups.set(dateStr, []);
-    }
-    room.dateGroups.get(dateStr).push(item);
+    room.messages.push(item);
   }
 
-  // 2차 패스: slug 미결정 채팅방 처리 (1:1 DM 판별)
+  // 2차 패스: displayName 미결정 채팅방 처리 (1:1 DM 판별)
   for (const [roomKey, room] of rooms) {
-    if (room.slug) continue;
+    if (room.displayName) continue;
 
     const members = [...room.members];
     const otherMembers = members.filter((m) => m !== MY_DISPLAY_NAME);
 
     if (otherMembers.length === 1) {
-      // 1:1 DM
-      room.slug = `dm-${sanitizeSlug(otherMembers[0])}`;
       room.displayName = `DM: ${otherMembers[0]}`;
     } else if (otherMembers.length > 1) {
-      // topic 없는 그룹 채팅
       const namesSorted = otherMembers.sort().slice(0, 3).join(', ');
-      room.slug = sanitizeSlug(otherMembers.sort().slice(0, 3).join('-'));
       room.displayName = namesSorted + (otherMembers.length > 3 ? ` 외 ${otherMembers.length - 3}명` : '');
     } else {
-      // 본인만 있는 경우 (봇 등)
-      room.slug = sanitizeSlug(members.join('-') || roomKey.slice(0, 20));
       room.displayName = members.join(', ') || roomKey.slice(0, 20);
     }
-  }
-
-  // roomMap 캐시 업데이트
-  let mapUpdated = false;
-  for (const [roomKey, room] of rooms) {
-    if (!roomMap[roomKey] || roomMap[roomKey].slug !== room.slug) {
-      roomMap[roomKey] = { slug: room.slug, displayName: room.displayName };
-      mapUpdated = true;
-    }
-  }
-  if (mapUpdated) {
-    saveRoomMap(roomMap);
-    log('info', `room-map.json 업데이트: ${Object.keys(roomMap).length}개 방`);
   }
 
   log('info', `${rooms.size}개 채팅방으로 그룹화 완료`);
@@ -292,55 +212,128 @@ function groupByRoom(items) {
 }
 
 /**
- * 요약 호출 여부 판단
- * 메시지 3건 미만이고 모든 메시지가 짧으면(20자 미만) 건너뜀
+ * 노이즈 사전 필터링
+ * - 빈 content 제거
+ * - 5자 이하 의미 없는 단답 제거
+ * - 시스템 발신자 메일 제거
  */
-function shouldSummarize(messages) {
-  if (messages.length >= 3) return true;
+function filterNoise(rooms) {
+  const NOISE_PATTERNS = /^(네|넵|넹|ㅇㅇ|ㅋㅋ+|ㅎㅎ+|ㅇㅋ|ok|확인|감사|수고|👍|👌|🙏|ㄴㄴ|ㄱㄱ)$/i;
+  const SYSTEM_SENDERS = /noreply|no-reply|microsoft|mailer-daemon|postmaster|notifications?@/i;
 
-  const hasSubstantialContent = messages.some((m) => {
-    const content = m.content || m.bodyPreview || m.bodyMarkdown || '';
-    return content.length >= 20;
-  });
+  let totalRemoved = 0;
 
-  return hasSubstantialContent;
+  for (const [roomKey, room] of rooms) {
+    const before = room.messages.length;
+
+    room.messages = room.messages.filter((m) => {
+      const content = m.content || m.bodyPreview || m.bodyMarkdown || m.subject || '';
+
+      // 빈 content
+      if (!content.trim()) return false;
+
+      // 시스템 발신자 메일
+      if (room.roomType === 'mail') {
+        const fromEmail = m.from?.emailAddress?.address || '';
+        if (SYSTEM_SENDERS.test(fromEmail)) return false;
+      }
+
+      // 5자 이하 의미 없는 단답
+      if (content.trim().length <= 5 && NOISE_PATTERNS.test(content.trim())) return false;
+
+      return true;
+    });
+
+    totalRemoved += before - room.messages.length;
+
+    // 메시지 0건인 방 제거
+    if (room.messages.length === 0) {
+      rooms.delete(roomKey);
+    }
+  }
+
+  log('info', `노이즈 필터링: ${totalRemoved}건 제거`);
+  return rooms;
 }
 
 /**
- * Claude CLI를 호출하여 방별 일일 요약 생성
+ * Claude에게 보낼 입력 JSON 구성
  */
-function summarizeRoomDay(room, dateStr, messages) {
+function buildReportInput(rooms, dateStr) {
+  const stats = {
+    'teams-chat': { rooms: 0, messages: 0 },
+    'teams-channel': { rooms: 0, messages: 0 },
+    'mail': { rooms: 0, messages: 0 },
+  };
+
+  const roomsData = [];
+
+  for (const [, room] of rooms) {
+    const type = room.roomType;
+    if (stats[type]) {
+      stats[type].rooms++;
+      stats[type].messages += room.messages.length;
+    }
+
+    const messages = room.messages.map((m) => {
+      const msg = {
+        from: m.from?.name || m.from?.emailAddress?.name || 'Unknown',
+        time: (m.createdDateTime || m.receivedDateTime || '').replace(/.*T/, '').replace(/\.\d+Z?$/, ''),
+        content: (m.content || m.bodyPreview || m.bodyMarkdown || '').slice(0, 500),
+      };
+
+      // 메일은 subject, to 추가
+      if (room.roomType === 'mail') {
+        if (m.subject) msg.subject = m.subject;
+        const toName = m.toRecipients?.[0]?.emailAddress?.name || m.to?.name || '';
+        if (toName) msg.to = toName;
+      }
+
+      return msg;
+    });
+
+    roomsData.push({
+      name: room.displayName,
+      type: room.roomType === 'teams-chat' && room.members.size <= 2 ? 'teams-chat-dm' : room.roomType,
+      participants: [...room.members],
+      messages,
+    });
+  }
+
+  return {
+    date: dateStr,
+    myName: MY_DISPLAY_NAME,
+    stats,
+    rooms: roomsData,
+  };
+}
+
+/**
+ * Claude CLI 1회 호출로 일일 리포트 생성
+ */
+function generateDailyReport(rooms) {
+  const today = new Date().toISOString().split('T')[0];
+  const reportInput = buildReportInput(rooms, today);
+
+  const totalMessages = Object.values(reportInput.stats).reduce((sum, s) => sum + s.messages, 0);
+  if (totalMessages === 0) {
+    log('info', '리포트 생성 건너뜀: 메시지 0건');
+    return null;
+  }
+
   const promptTemplate = readFileSync(
-    join(PROMPTS_DIR, 'room-summary.md'),
+    join(PROMPTS_DIR, 'daily-report.md'),
     'utf-8'
   );
 
-  // 프롬프트용 메시지 정리
-  const cleanMessages = messages.map((m) => ({
-    from: m.from?.name || m.from?.emailAddress?.name || 'Unknown',
-    time: m.createdDateTime || m.receivedDateTime || '',
-    content: (m.content || m.bodyPreview || m.bodyMarkdown || m.subject || '').slice(0, 500),
-    subject: m.subject || '',
-  }));
-
-  const participants = [...room.members].join(', ');
-
-  const inputData = JSON.stringify({
-    roomName: room.displayName,
-    roomType: room.roomType,
-    date: dateStr,
-    messageCount: messages.length,
-    participants,
-    messages: cleanMessages,
-  }, null, 2);
+  const inputJson = JSON.stringify(reportInput, null, 2);
 
   const fullPrompt = promptTemplate
-    .replace('{INPUT}', inputData)
-    .replace('{ROOM_NAME}', room.displayName)
-    .replace('{ROOM_TYPE}', room.roomType)
-    .replace('{DATE}', dateStr)
-    .replace('{MESSAGE_COUNT}', String(messages.length))
-    .replace('{PARTICIPANTS}', participants);
+    .replace('{INPUT}', inputJson)
+    .replace('{MY_NAME}', MY_DISPLAY_NAME)
+    .replace(/{DATE}/g, today);
+
+  log('info', `일일 리포트 생성 중... (${reportInput.rooms.length}개 방, ${totalMessages}건 메시지)`);
 
   try {
     const result = execFileSync(
@@ -361,111 +354,65 @@ function summarizeRoomDay(room, dateStr, messages) {
       }
     );
 
-    return extractMarkdownFromResponse(result);
+    const reportContent = extractMarkdownFromResponse(result);
+
+    ensureDir(DAILY_DIR);
+    const reportPath = join(DAILY_DIR, `${today}.md`);
+    writeFileAtomic(reportPath, reportContent);
+    log('info', `일일 리포트 저장: daily/${today}.md`);
+
+    return { date: today, path: `daily/${today}.md`, totalMessages };
   } catch (err) {
-    log('error', `Claude CLI 호출 실패 (${room.displayName}/${dateStr}): ${err.message}`);
+    log('error', `Claude CLI 호출 실패: ${err.message}`);
     return null;
   }
 }
 
 /**
- * index.json에 새 항목 추가 (room-day 단위)
+ * index.json에 daily 엔트리 추가
  */
-function updateIndex(entries) {
+function updateIndex(entry) {
+  if (!entry) return;
+
   const index = readJsonSafe(INDEX_FILE, {
-    version: 2,
+    version: 3,
     lastUpdated: null,
     entries: [],
   });
 
-  // v1 → v2 마이그레이션: 기존 entries 유지하되 version 업데이트
-  if (index.version === 1) {
-    index.version = 2;
+  // v2 → v3 마이그레이션
+  if (index.version < 3) {
+    index.version = 3;
   }
 
-  // 기존 path 기준으로 중복 방지
-  const existingPaths = new Set(index.entries.map((e) => e.path));
-  const newEntries = entries.filter((e) => !existingPaths.has(e.path));
+  // 같은 날짜 엔트리 교체
+  const existingIdx = index.entries.findIndex((e) => e.date === entry.date && e.type === 'daily-report');
+  const newEntry = {
+    id: `daily/${entry.date}`,
+    type: 'daily-report',
+    title: `업무 일일 리포트 - ${entry.date}`,
+    date: entry.date,
+    messageCount: entry.totalMessages,
+    path: entry.path,
+  };
 
-  if (newEntries.length === 0) {
-    log('info', 'index.json: 추가할 새 항목 없음');
-    return;
+  if (existingIdx >= 0) {
+    index.entries[existingIdx] = newEntry;
+  } else {
+    index.entries.push(newEntry);
   }
 
-  index.entries.push(...newEntries);
   index.lastUpdated = new Date().toISOString();
-
   writeFileAtomic(INDEX_FILE, JSON.stringify(index, null, 2));
-  log('info', `index.json 업데이트: ${newEntries.length}개 항목 추가 (총 ${index.entries.length}개)`);
-}
-
-/**
- * 일일 다이제스트 생성
- * @param {Array} roomSummaries - [{roomName, roomType, dateStr, path, messageCount, content}]
- */
-function generateDailyDigest(roomSummaries) {
-  if (roomSummaries.length === 0) {
-    log('info', '다이제스트 생성 건너뜀: 요약된 방 없음');
-    return;
-  }
-
-  const promptTemplate = readFileSync(
-    join(PROMPTS_DIR, 'daily-digest.md'),
-    'utf-8'
-  );
-
-  const inputData = JSON.stringify(
-    roomSummaries.map((s) => ({
-      roomName: s.roomName,
-      roomType: s.roomType,
-      messageCount: s.messageCount,
-      summary: s.content,
-    })),
-    null,
-    2
-  );
-
-  const fullPrompt = promptTemplate.replace('{INPUT}', inputData);
-
-  log('info', '일일 다이제스트 생성 중...');
-
-  try {
-    const result = execFileSync(
-      CLAUDE_CLI,
-      [
-        '-p',
-        fullPrompt,
-        '--output-format',
-        'json',
-        '--no-session-persistence',
-        '--dangerously-skip-permissions',
-      ],
-      {
-        timeout: CLAUDE_TIMEOUT_MS,
-        maxBuffer: 10 * 1024 * 1024,
-        encoding: 'utf-8',
-        env: getClaudeEnv(),
-      }
-    );
-
-    const digestContent = extractMarkdownFromResponse(result);
-
-    const today = new Date().toISOString().split('T')[0];
-    ensureDir(DAILY_DIR);
-    const digestPath = join(DAILY_DIR, `${today}.md`);
-    writeFileAtomic(digestPath, digestContent);
-    log('info', `일일 다이제스트 저장: daily/${today}.md`);
-  } catch (err) {
-    log('error', `다이제스트 생성 실패: ${err.message}`);
-  }
+  log('info', `index.json 업데이트: daily/${entry.date} (총 ${index.entries.length}개)`);
 }
 
 /**
  * 처리 완료된 inbox 파일 삭제
  */
-function cleanupInbox(processedItems) {
+function cleanupInbox(items) {
   let cleaned = 0;
-  for (const item of processedItems) {
+  for (const item of items) {
     const sourceFile = item._sourceFile;
     if (sourceFile && existsSync(sourceFile)) {
       try {
@@ -480,7 +427,7 @@ function cleanupInbox(processedItems) {
 }
 
 /**
- * sync-state.json의 processor 섹션 업데이트
+ * sync-state.json 업데이트
  */
 function updateSyncState(processedCount) {
   const state = readJsonSafe(SYNC_STATE_FILE, {});
@@ -495,7 +442,7 @@ function updateSyncState(processedCount) {
 // ─── Main ────────────────────────────────────────────────────────────
 
 async function main() {
-  log('info', 'Processor v2 started');
+  log('info', 'Processor v3 started');
   const startTime = Date.now();
 
   // 1. inbox 항목 수집
@@ -513,105 +460,41 @@ async function main() {
   }
 
   // 2. 채팅방별 그룹화
-  const rooms = groupByRoom(items);
+  let rooms = groupByRoom(items);
 
-  // 3. 각 room-day별 요약 생성
-  const indexEntries = [];
-  const roomSummaries = [];
-  const processedItems = [];
-  let summarizedCount = 0;
-  let skippedCount = 0;
+  // 3. 노이즈 필터링
+  rooms = filterNoise(rooms);
 
-  for (const [roomKey, room] of rooms) {
-    for (const [dateStr, messages] of room.dateGroups) {
-      // 요약 필요 여부 판단
-      if (!shouldSummarize(messages)) {
-        log('info', `건너뜀: ${room.displayName}/${dateStr} (${messages.length}건, 내용 부족)`);
-        skippedCount++;
-        processedItems.push(...messages);
-        continue;
-      }
-
-      log('info', `요약 중: ${room.displayName}/${dateStr} (${messages.length}건)`);
-
-      const summaryContent = summarizeRoomDay(room, dateStr, messages);
-      if (!summaryContent) {
-        log('warn', `요약 실패: ${room.displayName}/${dateStr}`);
-        continue;
-      }
-
-      // rooms/{type}/{slug}/{date}.md 저장
-      const roomDir = join(ROOMS_DIR, room.roomType, room.slug);
-      ensureDir(roomDir);
-      const filePath = join(roomDir, `${dateStr}.md`);
-
-      // 기존 파일이 있으면 병합 (같은 날 여러 번 실행 대응)
-      if (existsSync(filePath)) {
-        const existing = readFileSync(filePath, 'utf-8');
-        // 기존 내용을 덮어쓰기 (같은 날의 최신 요약으로 대체)
-        log('info', `기존 파일 덮어쓰기: ${room.roomType}/${room.slug}/${dateStr}.md`);
-      }
-
-      writeFileAtomic(filePath, summaryContent);
-
-      const relativePath = `rooms/${room.roomType}/${room.slug}/${dateStr}.md`;
-      log('info', `저장: ${relativePath}`);
-
-      // index 엔트리
-      indexEntries.push({
-        id: `${room.slug}/${dateStr}`,
-        type: room.roomType,
-        room: room.displayName,
-        title: `${room.displayName} - ${dateStr}`,
-        date: dateStr,
-        messageCount: messages.length,
-        path: relativePath,
-      });
-
-      // 다이제스트용 요약 수집
-      roomSummaries.push({
-        roomName: room.displayName,
-        roomType: room.roomType,
-        dateStr,
-        messageCount: messages.length,
-        content: summaryContent,
-        path: relativePath,
-      });
-
-      processedItems.push(...messages);
-      summarizedCount++;
-    }
+  if (rooms.size === 0) {
+    log('info', '필터링 후 처리할 채팅방이 없습니다. 종료합니다.');
+    process.exit(0);
   }
 
-  if (summarizedCount === 0 && skippedCount === 0) {
-    log('warn', '처리된 항목이 없습니다. 종료합니다.');
-    process.exit(1);
-  }
-
-  // 4. index.json 업데이트
+  // 4. Claude CLI 1회 호출 → 일일 리포트 생성
+  let reportResult;
   try {
-    updateIndex(indexEntries);
+    reportResult = generateDailyReport(rooms);
+  } catch (err) {
+    log('error', `리포트 생성 실패: ${err.message}`);
+  }
+
+  // 5. index.json 업데이트
+  try {
+    updateIndex(reportResult);
   } catch (err) {
     log('error', `index.json 업데이트 실패: ${err.message}`);
   }
 
-  // 5. 일일 다이제스트 생성
-  try {
-    generateDailyDigest(roomSummaries);
-  } catch (err) {
-    log('error', `일일 다이제스트 생성 실패: ${err.message}`);
-  }
-
   // 6. inbox 정리
   try {
-    cleanupInbox(processedItems);
+    cleanupInbox(items);
   } catch (err) {
     log('error', `inbox 정리 실패: ${err.message}`);
   }
 
   // 7. sync-state.json 업데이트
   try {
-    updateSyncState(processedItems.length);
+    updateSyncState(items.length);
   } catch (err) {
     log('error', `sync-state 업데이트 실패: ${err.message}`);
   }
@@ -620,7 +503,7 @@ async function main() {
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   log(
     'info',
-    `Processor 완료: ${summarizedCount}개 방 요약, ${skippedCount}개 건너뜀, ${processedItems.length}/${items.length}개 메시지 처리, ${elapsed}초 소요`
+    `Processor 완료: ${rooms.size}개 방, ${items.length}개 메시지 처리, ${elapsed}초 소요`
   );
 }
 

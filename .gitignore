@@ -7,7 +7,6 @@ node_modules/
 # Runtime data (personal content)
 .state/
 inbox/
-rooms/
 daily/
 archive/
 logs/

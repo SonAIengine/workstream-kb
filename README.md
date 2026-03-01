@@ -1,6 +1,6 @@
 # WorkStream KB
 
-업무 커뮤니케이션(메일, Teams)을 자동 수집하고 AI로 채팅방별 일일 요약을 생성하여 검색 가능한 지식 베이스를 구축하는 시스템.
+업무 커뮤니케이션(메일, Teams)을 자동 수집하고 AI로 하루 종합 업무 리포트를 생성하여 검색 가능한 지식 베이스를 구축하는 시스템.
 
 ## Why This Exists
 
@@ -11,17 +11,18 @@ If you work across multiple projects and receive dozens of emails and Teams mess
 ```
 MS Graph API          Fetcher (Layer 1)         Processor (Layer 2)         Knowledge Base
  ┌──────────┐         every 30 min              daily at 07:00
- │  Emails  │────┐    NO AI cost                Uses Claude CLI
+ │  Emails  │────┐    NO AI cost                Claude CLI 1 call
  │  Teams   │────┤
  │  Chats   │────┘
- │  Channels│──────►  inbox/*.json  ──────────►  Group by room/date  ──────►  rooms/{type}/{slug}/{date}.md
-                                                 Claude summarizes            index.json (search index)
-                                                 per room per day             daily/{date}.md (digest)
+ │  Channels│──────►  inbox/*.json  ──────────►  Group by room  ──────────►  daily/{date}.md
+                                                 Filter noise                index.json (search index)
+                                                 Build JSON input
+                                                 Claude → daily report
 ```
 
 **Layer 1 -- Fetcher** runs every 30 minutes with zero AI cost. It pulls new emails, Teams chats, and Teams channel messages from MS Graph API and saves raw JSON to `inbox/`.
 
-**Layer 2 -- Processor** runs once daily (07:00 by default). It groups inbox items by chat room and date, sends each room-day to Claude Code CLI for summarization (filtering out greetings, small talk, emoji-only messages), saves Markdown files organized by room type and slug, generates a daily digest, and updates the search index.
+**Layer 2 -- Processor** runs once daily (07:00 by default). It groups inbox items by chat room, filters noise (greetings, acknowledgements, emoji-only messages), builds a single structured JSON input, calls Claude Code CLI once to generate a comprehensive daily report, and saves it to `daily/{date}.md`.
 
 ## Project Structure
 
@@ -33,7 +34,7 @@ workstream-kb/
 ├── scripts/
 │   ├── package.json            # Dependencies: @azure/msal-node, turndown, dotenv
 │   ├── fetcher.mjs             # Layer 1: Data collection (no AI)
-│   ├── processor.mjs           # Layer 2: Room-based daily summarization
+│   ├── processor.mjs           # Layer 2: Daily report generation (1 Claude call)
 │   ├── archiver.mjs            # Archive old data
 │   ├── generate-sidebar.mjs    # Generate Docsify sidebar
 │   ├── lib/
@@ -46,8 +47,7 @@ workstream-kb/
 │   │   ├── dedup.mjs           # Deduplication via processed-ids tracking
 │   │   └── logger.mjs          # File + console logging
 │   └── prompts/
-│       ├── room-summary.md     # Room daily summary prompt template
-│       └── daily-digest.md     # Daily digest generation prompt
+│       └── daily-report.md     # Daily report prompt template
 ├── config/                     # Reference configs (copy to target locations)
 │   ├── kb-search.md            # → ~/.claude/commands/  (slash command)
 │   ├── kb-sync.md              # → ~/.claude/commands/  (slash command)
@@ -61,17 +61,9 @@ workstream-kb/
 │   ├── mail/                   # Raw email JSON
 │   ├── teams-chat/             # Raw Teams chat JSON
 │   └── teams-channel/          # Raw Teams channel JSON
-├── rooms/                      # Room-based daily summaries (gitignored)
-│   ├── teams-chat/             # Teams chat room summaries
-│   │   ├── {slug}/             # e.g., "ai-labs-팀원", "dm-김대희"
-│   │   │   └── {YYYY-MM-DD}.md
-│   │   └── ...
-│   ├── teams-channel/          # Teams channel summaries
-│   │   └── {slug}/
-│   ├── mail/                   # Mail daily summaries
-│   │   └── mail/
-│   └── _room-map.json          # chatId → slug cache
-├── daily/                      # Daily digest Markdown files (gitignored)
+├── daily/                      # Daily comprehensive reports (gitignored)
+├── archive/                    # 6+ month old reports (gitignored)
+│   └── daily/
 ├── logs/                       # Application logs (gitignored)
 └── index.json                  # Search index (gitignored)
 ```
@@ -96,7 +88,7 @@ npm install
 ### 2. Create runtime directories
 
 ```bash
-mkdir -p .state inbox/mail inbox/teams-chat inbox/teams-channel rooms daily logs
+mkdir -p .state inbox/mail inbox/teams-chat inbox/teams-channel daily logs
 ```
 
 ### 3. Configure environment
@@ -123,7 +115,7 @@ ls ~/.config/ms-365-mcp/.selected-account.json
 # Run the fetcher (collects emails and Teams messages)
 node scripts/fetcher.mjs
 
-# Run the processor (summarizes by room and generates daily digest)
+# Run the processor (generates daily comprehensive report)
 node scripts/processor.mjs
 ```
 
@@ -194,23 +186,14 @@ The `.env` file controls all settings. Copy `.env.example` and edit:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `CLAUDE_TIMEOUT_MS` | Timeout for each Claude CLI invocation (ms) | `180000` |
-| `MY_DISPLAY_NAME` | Your Teams display name (for 1:1 DM identification) | `손성준` |
+| `CLAUDE_TIMEOUT_MS` | Timeout for Claude CLI invocation (ms) | `180000` |
+| `MY_DISPLAY_NAME` | Your Teams display name (for action item categorization) | `손성준` |
 
 ## Retention Policy
 
 Data collection starts from `DATA_START_DATE` (default: 2026-02-01). Fetchers will never retrieve data before this date, even after a sync-state reset.
 
-After `ARCHIVE_AFTER_MONTHS` months (default: 6), data is automatically moved from `rooms/` and `daily/` into `archive/`:
-
-```
-archive/
-├── rooms/
-│   ├── teams-chat/{slug}/    # 6개월 지난 채팅방 요약
-│   ├── teams-channel/{slug}/
-│   └── mail/
-└── daily/                     # 6개월 지난 다이제스트
-```
+After `ARCHIVE_AFTER_MONTHS` months (default: 6), daily reports are automatically moved to `archive/daily/`.
 
 Run the archiver manually or via cron:
 
@@ -227,16 +210,16 @@ The archiver updates `index.json` paths so search continues to work for archived
 The fetcher (Layer 1) and processor (Layer 2) are intentionally separated:
 
 - **Fetcher** runs frequently (every 30 min) and incurs **zero AI cost**. It only calls MS Graph API and writes raw JSON.
-- **Processor** runs once daily and uses Claude Code CLI for summarization. This keeps AI costs predictable and low.
+- **Processor** runs once daily and uses Claude Code CLI for report generation. This keeps AI costs predictable and low.
 
-### Room-Based Daily Summaries
+### Single Daily Report (v3)
 
-Instead of classifying each message individually, the processor groups messages by chat room and date, then generates a single summary per room per day. This approach:
+Instead of generating per-room summaries, the processor groups all messages by room, filters noise, and sends the entire day's data to Claude in a single call. This approach:
 
-- **Filters noise**: Greetings, acknowledgements, and small talk are excluded
-- **Preserves context**: Messages in the same conversation thread are summarized together
-- **Reduces AI cost**: One Claude call per room-day instead of per message
-- **Improves searchability**: Room-based organization makes it easy to find conversations
+- **Reduces AI cost dramatically**: 1-2 Claude calls instead of 48+ (one per room)
+- **Produces better output**: Claude sees the full day's context and can cross-reference across rooms
+- **Simplifies architecture**: No intermediate room files, no room-map cache
+- **Faster execution**: ~15 seconds instead of ~6 minutes
 
 ### Token Sharing with MS365 MCP Server
 
@@ -248,17 +231,13 @@ All file writes use a temp-file-then-rename pattern to prevent corruption if a p
 
 ### Graceful Degradation
 
-The fetcher continues collecting from remaining sources even if one source (e.g., Teams channels) fails. The processor processes whatever rooms it can, even if some room summaries fail.
+The fetcher continues collecting from remaining sources even if one source (e.g., Teams channels) fails. The processor processes whatever data it can, even if some items fail to parse.
 
 ## Customization
 
-### Modifying Summary Behavior
+### Modifying Report Behavior
 
-Edit `scripts/prompts/room-summary.md` to change how Claude summarizes room messages. The prompt receives a JSON object with room metadata and message array, and must return a Markdown document with front-matter.
-
-### Changing the Daily Digest Format
-
-Edit `scripts/prompts/daily-digest.md` to customize the digest output format.
+Edit `scripts/prompts/daily-report.md` to change how Claude generates the daily report. The prompt receives a JSON object with all rooms and their messages, and must return a comprehensive Markdown report.
 
 ### Adjusting the Schedule
 
@@ -284,7 +263,7 @@ npm run sidebar     # 사이드바만 재생성
 
 브라우저에서 http://localhost:3000 접속하면:
 
-- **사이드바**: 채팅방별/날짜별 네비게이션
+- **사이드바**: 날짜별 리포트 네비게이션
 - **검색**: 전문 검색 (한국어 지원)
 - **테마**: OS 설정에 따라 다크/라이트 자동 전환
 - **front-matter**: YAML 메타데이터 자동 숨김
@@ -297,9 +276,9 @@ With the slash commands installed, you can use these directly in Claude Code:
 
 | Command | Description |
 |---------|-------------|
-| `/kb-search {keywords}` | Search the knowledge base by keyword (searches title, room, type, date) |
+| `/kb-search {keywords}` | Search the knowledge base by keyword |
 | `/kb-sync` | Manually trigger fetcher + processor |
-| `/kb-status` | View sync status, inbox queue, room stats, and schedule info |
+| `/kb-status` | View sync status, inbox queue, and report stats |
 
 ## Adapting to Linux
 
@@ -342,7 +321,7 @@ The fetcher exits with code 2 when authentication fails. This usually means the 
 | fetcher.mjs | 1 | General error (partial data may have been collected) |
 | fetcher.mjs | 2 | Authentication / token error |
 | processor.mjs | 0 | Success |
-| processor.mjs | 1 | Error (no rooms summarized, or fatal error) |
+| processor.mjs | 1 | Error (no data processed, or fatal error) |
 
 ## License
 

@@ -1,18 +1,10 @@
 # WorkStream KB
 
-업무 커뮤니케이션(메일, Teams)을 자동 수집하고 AI로 채팅방별 일일 요약을 생성하여 검색 가능한 지식 베이스.
-
-## 채팅방 바로가기
-
-| 구분 | 바로가기 |
-|------|----------|
-| Teams 채팅 | [rooms/teams-chat/](rooms/teams-chat/) |
-| Teams 채널 | [rooms/teams-channel/](rooms/teams-channel/) |
-| 메일 | [rooms/mail/](rooms/mail/) |
+업무 커뮤니케이션(메일, Teams)을 자동 수집하고 AI로 하루 종합 업무 리포트를 생성하여 검색 가능한 지식 베이스.
 
 ## 바로가기
 
-- **일일 다이제스트**: 사이드바의 "Daily" 섹션
+- **일일 리포트**: 사이드바의 "Daily Report" 섹션
 - **검색**: 왼쪽 상단 검색창 (Ctrl+K)
 - **아카이브**: 사이드바의 "Archive" 섹션
 

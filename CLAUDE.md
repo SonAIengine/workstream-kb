@@ -4,7 +4,7 @@
 
 2-Layer 하이브리드 시스템:
 - **Layer 1 (Fetcher)**: 30분마다 MS Graph API로 메일/Teams 수집 → `inbox/` JSON 저장 (AI 비용 없음)
-- **Layer 2 (Processor)**: 매일 07:00 Claude CLI로 채팅방별 일일 요약 → `rooms/{type}/{slug}/{date}.md` + `daily/` digest + `index.json`
+- **Layer 2 (Processor)**: 매일 07:00 inbox 전체를 Claude CLI 1회 호출로 종합 업무 리포트 생성 → `daily/{date}.md` + `index.json`
 - **Archiver**: `ARCHIVE_AFTER_MONTHS` 이전 데이터를 `archive/`로 이동
 
 ## Directory Structure
@@ -24,17 +24,14 @@ workstream-kb/
 │   │   ├── sync-state.mjs
 │   │   ├── dedup.mjs
 │   │   └── logger.mjs
-│   └── prompts/             # Claude CLI 프롬프트 템플릿
+│   └── prompts/
+│       └── daily-report.md  # 일일 리포트 프롬프트 템플릿
 ├── config/                  # launchd plist, slash commands
 ├── .state/                  # sync-state, processed-ids (gitignored)
 ├── inbox/                   # raw JSON staging (gitignored)
-├── rooms/                   # 채팅방별 일일 요약 Markdown (gitignored)
-│   ├── teams-chat/{slug}/   # Teams 채팅방 요약
-│   ├── teams-channel/{slug}/ # Teams 채널 요약
-│   ├── mail/                # 메일 일별 요약
-│   └── _room-map.json       # chatId → slug 캐시
+├── daily/                   # 일일 종합 리포트 (gitignored)
 ├── archive/                 # 6개월 이후 아카이브 (gitignored)
-├── daily/                   # 일일 다이제스트 (gitignored)
+│   └── daily/
 ├── index.json               # 검색 인덱스 (gitignored)
 └── .env                     # 환경 설정 (gitignored, .env.example 참조)
 ```
@@ -54,9 +51,8 @@ workstream-kb/
 | `ARCHIVE_AFTER_MONTHS` | N개월 후 archive/ 이동 |
 | `INITIAL_FETCH_DAYS` | 첫 실행 시 며칠 전까지 fetch |
 | `KB_ROOT` | workstream-kb 루트 경로 |
-| `ROOMS_DIR` | 채팅방 요약 저장 디렉토리 |
-| `ROOM_MAP_FILE` | chatId → slug 매핑 캐시 |
-| `MY_DISPLAY_NAME` | 1:1 DM 식별용 내 표시 이름 |
+| `DAILY_DIR` | 일일 리포트 저장 디렉토리 |
+| `MY_DISPLAY_NAME` | 본인 표시 이름 (액션 아이템 구분용) |
 
 ## Retention Policy
 
@@ -69,7 +65,7 @@ workstream-kb/
 ```bash
 cd scripts && npm install          # 의존성 설치
 node scripts/fetcher.mjs           # 메일/Teams 수집
-node scripts/processor.mjs         # 채팅방별 일일 요약 생성
+node scripts/processor.mjs         # 일일 종합 리포트 생성
 node scripts/archiver.mjs          # 아카이브 실행
 ```
 
