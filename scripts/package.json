@@ -5,7 +5,9 @@
   "description": "Personal Knowledge Base Auto-Sync System",
   "scripts": {
     "fetch": "node fetcher.mjs",
-    "process": "node processor.mjs"
+    "process": "node processor.mjs",
+    "sidebar": "node generate-sidebar.mjs",
+    "viewer": "node generate-sidebar.mjs && npx serve .. -l 3000"
   },
   "dependencies": {
     "@azure/msal-node": "^2.16.2",

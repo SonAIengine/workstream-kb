@@ -51,14 +51,18 @@ export const CLAUDE_CLI_PATH = expandHome(env('CLAUDE_CLI_PATH', '/usr/local/bin
 // 파생 경로
 export const SCRIPTS_DIR = join(KB_ROOT, 'scripts');
 export const INBOX_DIR = join(KB_ROOT, 'inbox');
-export const PROJECTS_DIR = join(KB_ROOT, 'projects');
+export const ROOMS_DIR = join(KB_ROOT, 'rooms');
+export const ROOM_MAP_FILE = join(ROOMS_DIR, '_room-map.json');
 export const DAILY_DIR = join(KB_ROOT, 'daily');
 export const STATE_DIR = join(KB_ROOT, '.state');
 export const LOGS_DIR = join(KB_ROOT, 'logs');
 export const INDEX_FILE = join(KB_ROOT, 'index.json');
 export const SYNC_STATE_FILE = join(STATE_DIR, 'sync-state.json');
 export const PROCESSED_IDS_FILE = join(STATE_DIR, 'processed-ids.json');
-export const PROJECT_KEYWORDS_FILE = join(STATE_DIR, 'project-keywords.json');
+
+// ─── Display ──────────────────────────────────────────────────────
+
+export const MY_DISPLAY_NAME = env('MY_DISPLAY_NAME', '손성준');
 
 // ─── Fetcher Settings ──────────────────────────────────────────
 

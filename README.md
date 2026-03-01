@@ -1,6 +1,6 @@
 # WorkStream KB
 
-업무 커뮤니케이션(메일, Teams)을 자동 수집하고 AI로 분류/요약하여 검색 가능한 지식 베이스를 구축하는 시스템.
+업무 커뮤니케이션(메일, Teams)을 자동 수집하고 AI로 채팅방별 일일 요약을 생성하여 검색 가능한 지식 베이스를 구축하는 시스템.
 
 ## Why This Exists
 
@@ -14,14 +14,14 @@ MS Graph API          Fetcher (Layer 1)         Processor (Layer 2)         Know
  │  Emails  │────┐    NO AI cost                Uses Claude CLI
  │  Teams   │────┤
  │  Chats   │────┘
- │  Channels│──────►  inbox/*.json  ──────────►  Claude classifies  ──────►  projects/{name}/{YYYY-MM}/*.md
-                                                 & summarizes               index.json (search index)
-                                                                            daily/{date}.md (digest)
+ │  Channels│──────►  inbox/*.json  ──────────►  Group by room/date  ──────►  rooms/{type}/{slug}/{date}.md
+                                                 Claude summarizes            index.json (search index)
+                                                 per room per day             daily/{date}.md (digest)
 ```
 
 **Layer 1 -- Fetcher** runs every 30 minutes with zero AI cost. It pulls new emails, Teams chats, and Teams channel messages from MS Graph API and saves raw JSON to `inbox/`.
 
-**Layer 2 -- Processor** runs once daily (07:00 by default). It reads the inbox, sends items to Claude Code CLI for project classification and summarization, saves Markdown files organized by project and month, generates a daily digest, and updates the search index.
+**Layer 2 -- Processor** runs once daily (07:00 by default). It groups inbox items by chat room and date, sends each room-day to Claude Code CLI for summarization (filtering out greetings, small talk, emoji-only messages), saves Markdown files organized by room type and slug, generates a daily digest, and updates the search index.
 
 ## Project Structure
 
@@ -33,7 +33,9 @@ workstream-kb/
 ├── scripts/
 │   ├── package.json            # Dependencies: @azure/msal-node, turndown, dotenv
 │   ├── fetcher.mjs             # Layer 1: Data collection (no AI)
-│   ├── processor.mjs           # Layer 2: AI classification + summary
+│   ├── processor.mjs           # Layer 2: Room-based daily summarization
+│   ├── archiver.mjs            # Archive old data
+│   ├── generate-sidebar.mjs    # Generate Docsify sidebar
 │   ├── lib/
 │   │   ├── config.mjs          # Central config (reads .env)
 │   │   ├── token-manager.mjs   # MSAL token (shares cache with MS365 MCP Server)
@@ -44,7 +46,7 @@ workstream-kb/
 │   │   ├── dedup.mjs           # Deduplication via processed-ids tracking
 │   │   └── logger.mjs          # File + console logging
 │   └── prompts/
-│       ├── classify.md         # Classification prompt template
+│       ├── room-summary.md     # Room daily summary prompt template
 │       └── daily-digest.md     # Daily digest generation prompt
 ├── config/                     # Reference configs (copy to target locations)
 │   ├── kb-search.md            # → ~/.claude/commands/  (slash command)
@@ -54,16 +56,21 @@ workstream-kb/
 │   └── com.kb.processor.plist  # → ~/Library/LaunchAgents/
 ├── .state/                     # Runtime state (gitignored)
 │   ├── sync-state.json         # Last sync timestamps & counters
-│   ├── processed-ids.json      # Deduplication log
-│   └── project-keywords.json   # Project classification rules
+│   └── processed-ids.json      # Deduplication log
 ├── inbox/                      # Staging area for raw data (gitignored)
 │   ├── mail/                   # Raw email JSON
 │   ├── teams-chat/             # Raw Teams chat JSON
 │   └── teams-channel/          # Raw Teams channel JSON
-├── projects/                   # Classified Markdown documents (gitignored)
-│   ├── _general/               # Items that don't match any project
-│   └── {project-name}/         # e.g., "XGEN-2.0", "제주은행"
-│       └── {YYYY-MM}/          # Monthly subdirectories
+├── rooms/                      # Room-based daily summaries (gitignored)
+│   ├── teams-chat/             # Teams chat room summaries
+│   │   ├── {slug}/             # e.g., "ai-labs-팀원", "dm-김대희"
+│   │   │   └── {YYYY-MM-DD}.md
+│   │   └── ...
+│   ├── teams-channel/          # Teams channel summaries
+│   │   └── {slug}/
+│   ├── mail/                   # Mail daily summaries
+│   │   └── mail/
+│   └── _room-map.json          # chatId → slug cache
 ├── daily/                      # Daily digest Markdown files (gitignored)
 ├── logs/                       # Application logs (gitignored)
 └── index.json                  # Search index (gitignored)
@@ -89,7 +96,7 @@ npm install
 ### 2. Create runtime directories
 
 ```bash
-mkdir -p .state inbox/mail inbox/teams-chat inbox/teams-channel projects daily logs
+mkdir -p .state inbox/mail inbox/teams-chat inbox/teams-channel rooms daily logs
 ```
 
 ### 3. Configure environment
@@ -100,28 +107,7 @@ cp .env.example .env
 
 Edit `.env` with your settings (see [Configuration](#configuration) below).
 
-### 4. Set up project keywords
-
-Create `.state/project-keywords.json` to define your project categories:
-
-```json
-{
-  "MyProject": {
-    "keywords": ["myproject", "MP", "my project"],
-    "domains": ["myproject.com"],
-    "contacts": []
-  },
-  "AnotherProject": {
-    "keywords": ["another", "AP"],
-    "domains": ["another.example.com"],
-    "contacts": []
-  }
-}
-```
-
-Also update `scripts/prompts/classify.md` to list your projects so Claude knows how to classify items.
-
-### 5. Ensure MS365 MCP Server is logged in
+### 4. Ensure MS365 MCP Server is logged in
 
 This project reuses the token cache from [MS 365 MCP Server](https://github.com/softeria-eu/ms-365-mcp-server). Make sure you have logged in through the MCP server at least once:
 
@@ -131,17 +117,17 @@ ls ~/.config/ms-365-mcp/.token-cache.json
 ls ~/.config/ms-365-mcp/.selected-account.json
 ```
 
-### 6. Test manually
+### 5. Test manually
 
 ```bash
 # Run the fetcher (collects emails and Teams messages)
 node scripts/fetcher.mjs
 
-# Run the processor (classifies and generates Markdown)
+# Run the processor (summarizes by room and generates daily digest)
 node scripts/processor.mjs
 ```
 
-### 7. Install Claude Code slash commands (optional)
+### 6. Install Claude Code slash commands (optional)
 
 ```bash
 mkdir -p ~/.claude/commands
@@ -152,7 +138,7 @@ cp config/kb-status.md ~/.claude/commands/
 
 This enables `/kb-search`, `/kb-sync`, and `/kb-status` inside Claude Code.
 
-### 8. Set up automated scheduling (macOS)
+### 7. Set up automated scheduling (macOS)
 
 ```bash
 # Copy and edit the plist files (update paths to match your system)
@@ -208,20 +194,22 @@ The `.env` file controls all settings. Copy `.env.example` and edit:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `BATCH_SIZE` | Items per Claude CLI classification call | `100` |
 | `CLAUDE_TIMEOUT_MS` | Timeout for each Claude CLI invocation (ms) | `180000` |
+| `MY_DISPLAY_NAME` | Your Teams display name (for 1:1 DM identification) | `손성준` |
 
 ## Retention Policy
 
 Data collection starts from `DATA_START_DATE` (default: 2026-02-01). Fetchers will never retrieve data before this date, even after a sync-state reset.
 
-After `ARCHIVE_AFTER_MONTHS` months (default: 6), data is automatically moved from `projects/` and `daily/` into `archive/`:
+After `ARCHIVE_AFTER_MONTHS` months (default: 6), data is automatically moved from `rooms/` and `daily/` into `archive/`:
 
 ```
 archive/
-├── 제주은행/2026-02/    # 6개월 지난 프로젝트 자료
-├── XGEN-2.0/2026-02/
-└── daily/               # 6개월 지난 다이제스트
+├── rooms/
+│   ├── teams-chat/{slug}/    # 6개월 지난 채팅방 요약
+│   ├── teams-channel/{slug}/
+│   └── mail/
+└── daily/                     # 6개월 지난 다이제스트
 ```
 
 Run the archiver manually or via cron:
@@ -239,7 +227,16 @@ The archiver updates `index.json` paths so search continues to work for archived
 The fetcher (Layer 1) and processor (Layer 2) are intentionally separated:
 
 - **Fetcher** runs frequently (every 30 min) and incurs **zero AI cost**. It only calls MS Graph API and writes raw JSON.
-- **Processor** runs once daily and uses Claude Code CLI for classification. This keeps AI costs predictable and low.
+- **Processor** runs once daily and uses Claude Code CLI for summarization. This keeps AI costs predictable and low.
+
+### Room-Based Daily Summaries
+
+Instead of classifying each message individually, the processor groups messages by chat room and date, then generates a single summary per room per day. This approach:
+
+- **Filters noise**: Greetings, acknowledgements, and small talk are excluded
+- **Preserves context**: Messages in the same conversation thread are summarized together
+- **Reduces AI cost**: One Claude call per room-day instead of per message
+- **Improves searchability**: Room-based organization makes it easy to find conversations
 
 ### Token Sharing with MS365 MCP Server
 
@@ -251,29 +248,13 @@ All file writes use a temp-file-then-rename pattern to prevent corruption if a p
 
 ### Graceful Degradation
 
-The fetcher continues collecting from remaining sources even if one source (e.g., Teams channels) fails. The processor processes whatever was successfully classified, even if some batches fail.
+The fetcher continues collecting from remaining sources even if one source (e.g., Teams channels) fails. The processor processes whatever rooms it can, even if some room summaries fail.
 
 ## Customization
 
-### Adding Projects
+### Modifying Summary Behavior
 
-1. Edit `.state/project-keywords.json` to add keyword rules:
-
-```json
-{
-  "NewProject": {
-    "keywords": ["new-project", "NP", "new project"],
-    "domains": ["newproject.com"],
-    "contacts": ["john@newproject.com"]
-  }
-}
-```
-
-2. Update `scripts/prompts/classify.md` to include the new project in the classification prompt.
-
-### Modifying Classification Behavior
-
-Edit `scripts/prompts/classify.md` to change how Claude classifies items. The prompt receives a JSON array of items and must return a JSON array with `id`, `project`, `title`, `summary`, `tags`, and `importance` fields.
+Edit `scripts/prompts/room-summary.md` to change how Claude summarizes room messages. The prompt receives a JSON object with room metadata and message array, and must return a Markdown document with front-matter.
 
 ### Changing the Daily Digest Format
 
@@ -291,15 +272,34 @@ launchctl unload ~/Library/LaunchAgents/com.kb.fetcher.plist
 launchctl load ~/Library/LaunchAgents/com.kb.fetcher.plist
 ```
 
+## Docsify Viewer
+
+KB 문서를 브라우저에서 확인할 수 있는 로컬 뷰어입니다. 빌드 없이 마크다운을 동적 로드하며 전문 검색을 지원합니다.
+
+```bash
+cd scripts
+npm run viewer      # 사이드바 생성 + localhost:3000 시작
+npm run sidebar     # 사이드바만 재생성
+```
+
+브라우저에서 http://localhost:3000 접속하면:
+
+- **사이드바**: 채팅방별/날짜별 네비게이션
+- **검색**: 전문 검색 (한국어 지원)
+- **테마**: OS 설정에 따라 다크/라이트 자동 전환
+- **front-matter**: YAML 메타데이터 자동 숨김
+
+> `_sidebar.md`는 `scripts/generate-sidebar.mjs`로 자동 생성되며 gitignore 대상입니다. 새 문서 추가 후 `npm run sidebar`를 실행하세요.
+
 ## Claude Code Integration
 
 With the slash commands installed, you can use these directly in Claude Code:
 
 | Command | Description |
 |---------|-------------|
-| `/kb-search {keywords}` | Search the knowledge base by keyword (searches title, summary, tags, project) |
+| `/kb-search {keywords}` | Search the knowledge base by keyword (searches title, room, type, date) |
 | `/kb-sync` | Manually trigger fetcher + processor |
-| `/kb-status` | View sync status, inbox queue, project stats, and schedule info |
+| `/kb-status` | View sync status, inbox queue, room stats, and schedule info |
 
 ## Adapting to Linux
 
@@ -342,7 +342,7 @@ The fetcher exits with code 2 when authentication fails. This usually means the 
 | fetcher.mjs | 1 | General error (partial data may have been collected) |
 | fetcher.mjs | 2 | Authentication / token error |
 | processor.mjs | 0 | Success |
-| processor.mjs | 1 | Error (no items classified, or fatal error) |
+| processor.mjs | 1 | Error (no rooms summarized, or fatal error) |
 
 ## License
 

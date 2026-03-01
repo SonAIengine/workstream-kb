@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 
 /**
- * Knowledge Base Processor (Layer 2)
+ * Knowledge Base Processor (Layer 2) - v2
  * - inbox의 메일/Teams 항목을 수집
- * - Claude CLI로 프로젝트 분류 및 요약
- * - 프로젝트별 마크다운 저장
- * - 일일 다이제스트 생성
+ * - 채팅방(room)별 + 날짜별로 그룹화
+ * - Claude CLI로 방별 일일 요약 생성
+ * - rooms/{type}/{slug}/{date}.md 저장
+ * - 전체 일일 다이제스트 생성
  *
  * 매일 07:00 launchd로 실행
  */
@@ -24,16 +25,16 @@ import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   INBOX_DIR,
-  PROJECTS_DIR,
+  ROOMS_DIR,
   DAILY_DIR,
   STATE_DIR,
   LOGS_DIR,
   INDEX_FILE,
   SYNC_STATE_FILE,
+  ROOM_MAP_FILE,
   CLAUDE_CLI_PATH as CLAUDE_CLI,
-  BATCH_SIZE,
   CLAUDE_TIMEOUT_MS,
-  PROJECT_KEYWORDS_FILE,
+  MY_DISPLAY_NAME,
 } from './lib/config.mjs';
 
 const PROMPTS_DIR = join(dirname(new URL(import.meta.url).pathname), 'prompts');
@@ -61,18 +62,6 @@ function log(level, msg) {
 }
 
 // ─── Utility Functions ───────────────────────────────────────────────
-
-/**
- * 파일명에 사용할 수 없는 문자 제거 및 길이 제한
- */
-function sanitizeFilename(name) {
-  return name
-    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 80);
-}
 
 /**
  * 원자적 파일 쓰기: temp 파일에 쓴 후 rename
@@ -106,48 +95,18 @@ function readJsonSafe(filePath, defaultValue) {
 }
 
 /**
- * Claude 응답에서 JSON 배열 추출 (non-JSON wrapper 대응)
+ * Claude 응답에서 markdown 추출 (--output-format json wrapper 대응)
  */
-function extractJsonFromResponse(text) {
-  // 먼저 전체가 유효한 JSON인지 확인
+function extractMarkdownFromResponse(text) {
   try {
     const parsed = JSON.parse(text);
-    return parsed;
+    if (parsed.result && typeof parsed.result === 'string') {
+      return parsed.result;
+    }
   } catch {
-    // JSON 블록을 찾아서 추출 시도
+    // JSON이 아니면 그대로 markdown
   }
-
-  // ```json ... ``` 블록 추출
-  const jsonBlockMatch = text.match(/```json\s*([\s\S]*?)```/);
-  if (jsonBlockMatch) {
-    try {
-      return JSON.parse(jsonBlockMatch[1].trim());
-    } catch {
-      // 다음 방법 시도
-    }
-  }
-
-  // [ ... ] 배열 패턴 추출
-  const arrayMatch = text.match(/\[[\s\S]*\]/);
-  if (arrayMatch) {
-    try {
-      return JSON.parse(arrayMatch[0]);
-    } catch {
-      // 다음 방법 시도
-    }
-  }
-
-  // { ... } 객체 패턴 추출
-  const objMatch = text.match(/\{[\s\S]*\}/);
-  if (objMatch) {
-    try {
-      return JSON.parse(objMatch[0]);
-    } catch {
-      // 추출 실패
-    }
-  }
-
-  return null;
+  return text;
 }
 
 /**
@@ -157,6 +116,32 @@ function getClaudeEnv() {
   const env = { ...process.env };
   delete env.CLAUDECODE;
   return env;
+}
+
+/**
+ * 디렉토리명용 slug 생성 (한글/영문/숫자/하이픈만 허용)
+ */
+function sanitizeSlug(name) {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[()（）\[\]]/g, '')
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 60) || 'unknown';
+}
+
+// ─── Room Map (chatId → slug 캐시) ──────────────────────────────────
+
+function loadRoomMap() {
+  return readJsonSafe(ROOM_MAP_FILE, {});
+}
+
+function saveRoomMap(roomMap) {
+  ensureDir(dirname(ROOM_MAP_FILE));
+  writeFileAtomic(ROOM_MAP_FILE, JSON.stringify(roomMap, null, 2));
 }
 
 // ─── Core Functions ──────────────────────────────────────────────────
@@ -194,42 +179,168 @@ function collectInboxItems() {
 }
 
 /**
- * Claude CLI를 사용하여 항목들을 프로젝트별로 분류
- * @param {Array} items - 분류할 항목 배열
- * @returns {Array} 분류 결과 배열
+ * 아이템들을 룸별로 그룹화
+ * @returns {Map<string, {slug, displayName, roomType, dateGroups: Map<string, Array>}>}
  */
-function classifyItems(items) {
-  let promptTemplate = readFileSync(
-    join(PROMPTS_DIR, 'classify.md'),
+function groupByRoom(items) {
+  const rooms = new Map();
+  const roomMap = loadRoomMap();
+
+  for (const item of items) {
+    let roomKey, slug, displayName, roomType;
+
+    if (item._sourceType === 'teams-chat') {
+      roomKey = item.chatId || item.id;
+      roomType = 'teams-chat';
+
+      // 캐시된 slug가 있으면 사용
+      if (roomMap[roomKey]) {
+        slug = roomMap[roomKey].slug;
+        displayName = roomMap[roomKey].displayName;
+      } else if (item.chatTopic) {
+        // 그룹 채팅 (topic 있음)
+        slug = sanitizeSlug(item.chatTopic);
+        displayName = item.chatTopic;
+      } else {
+        // 1:1 또는 topic 없는 채팅 — 나중에 멤버 분석으로 결정
+        slug = null; // 임시, 그룹 완성 후 결정
+        displayName = null;
+      }
+    } else if (item._sourceType === 'teams-channel') {
+      const teamName = item.teamName || 'unknown-team';
+      const channelName = item.channelName || 'unknown-channel';
+      roomKey = `${item.teamId || teamName}_${item.channelId || channelName}`;
+      roomType = 'teams-channel';
+      slug = sanitizeSlug(`${teamName}_${channelName}`);
+      displayName = `${teamName} / ${channelName}`;
+    } else if (item._sourceType === 'mail') {
+      roomKey = 'mail';
+      roomType = 'mail';
+      slug = 'mail';
+      displayName = '메일';
+    } else {
+      continue;
+    }
+
+    if (!rooms.has(roomKey)) {
+      rooms.set(roomKey, {
+        slug,
+        displayName,
+        roomType,
+        members: new Set(),
+        dateGroups: new Map(),
+      });
+    }
+
+    const room = rooms.get(roomKey);
+    // 멤버 추적
+    const fromName = item.from?.name || item.from?.emailAddress?.name || '';
+    if (fromName) room.members.add(fromName);
+
+    // slug/displayName 업데이트 (캐시 miss 후 topic 있는 메시지 발견 시)
+    if (!room.slug && item.chatTopic) {
+      room.slug = sanitizeSlug(item.chatTopic);
+      room.displayName = item.chatTopic;
+    }
+
+    // 날짜별 그룹화
+    const dateStr = (item.receivedDateTime || item.createdDateTime || new Date().toISOString()).split('T')[0];
+    if (!room.dateGroups.has(dateStr)) {
+      room.dateGroups.set(dateStr, []);
+    }
+    room.dateGroups.get(dateStr).push(item);
+  }
+
+  // 2차 패스: slug 미결정 채팅방 처리 (1:1 DM 판별)
+  for (const [roomKey, room] of rooms) {
+    if (room.slug) continue;
+
+    const members = [...room.members];
+    const otherMembers = members.filter((m) => m !== MY_DISPLAY_NAME);
+
+    if (otherMembers.length === 1) {
+      // 1:1 DM
+      room.slug = `dm-${sanitizeSlug(otherMembers[0])}`;
+      room.displayName = `DM: ${otherMembers[0]}`;
+    } else if (otherMembers.length > 1) {
+      // topic 없는 그룹 채팅
+      const namesSorted = otherMembers.sort().slice(0, 3).join(', ');
+      room.slug = sanitizeSlug(otherMembers.sort().slice(0, 3).join('-'));
+      room.displayName = namesSorted + (otherMembers.length > 3 ? ` 외 ${otherMembers.length - 3}명` : '');
+    } else {
+      // 본인만 있는 경우 (봇 등)
+      room.slug = sanitizeSlug(members.join('-') || roomKey.slice(0, 20));
+      room.displayName = members.join(', ') || roomKey.slice(0, 20);
+    }
+  }
+
+  // roomMap 캐시 업데이트
+  let mapUpdated = false;
+  for (const [roomKey, room] of rooms) {
+    if (!roomMap[roomKey] || roomMap[roomKey].slug !== room.slug) {
+      roomMap[roomKey] = { slug: room.slug, displayName: room.displayName };
+      mapUpdated = true;
+    }
+  }
+  if (mapUpdated) {
+    saveRoomMap(roomMap);
+    log('info', `room-map.json 업데이트: ${Object.keys(roomMap).length}개 방`);
+  }
+
+  log('info', `${rooms.size}개 채팅방으로 그룹화 완료`);
+  return rooms;
+}
+
+/**
+ * 요약 호출 여부 판단
+ * 메시지 3건 미만이고 모든 메시지가 짧으면(20자 미만) 건너뜀
+ */
+function shouldSummarize(messages) {
+  if (messages.length >= 3) return true;
+
+  const hasSubstantialContent = messages.some((m) => {
+    const content = m.content || m.bodyPreview || m.bodyMarkdown || '';
+    return content.length >= 20;
+  });
+
+  return hasSubstantialContent;
+}
+
+/**
+ * Claude CLI를 호출하여 방별 일일 요약 생성
+ */
+function summarizeRoomDay(room, dateStr, messages) {
+  const promptTemplate = readFileSync(
+    join(PROMPTS_DIR, 'room-summary.md'),
     'utf-8'
   );
 
-  // project-keywords.json에서 동적으로 프로젝트 목록 주입
-  if (promptTemplate.includes('{PROJECTS}')) {
-    const keywords = readJsonSafe(PROJECT_KEYWORDS_FILE, {});
-    const projectList = Object.entries(keywords)
-      .map(([name, cfg]) => `- ${name}: 키워드 [${cfg.keywords?.join(', ') || ''}]`)
-      .join('\n');
-    promptTemplate = promptTemplate.replace('{PROJECTS}', projectList + '\n- _general: 위 프로젝트에 해당하지 않는 일반 항목');
-  }
-
-  // 분류에 필요한 최소 필드만 추출 (프롬프트 크기 제한)
-  const cleanItems = items.map((item) => ({
-    id: item.id,
-    type: item._sourceType || item.type,
-    subject: item.subject || item.chatTopic || '',
-    from: item.from?.name || item.from?.emailAddress?.name || '',
-    fromEmail: item.from?.email || item.from?.emailAddress?.address || '',
-    bodyPreview: (item.bodyPreview || item.bodyMarkdown || item.content || '').slice(0, 300),
-    importance: item.importance || 'normal',
-    date: item.receivedDateTime || item.createdDateTime || '',
+  // 프롬프트용 메시지 정리
+  const cleanMessages = messages.map((m) => ({
+    from: m.from?.name || m.from?.emailAddress?.name || 'Unknown',
+    time: m.createdDateTime || m.receivedDateTime || '',
+    content: (m.content || m.bodyPreview || m.bodyMarkdown || m.subject || '').slice(0, 500),
+    subject: m.subject || '',
   }));
-  const fullPrompt = promptTemplate.replace(
-    '{INPUT}',
-    JSON.stringify(cleanItems, null, 2)
-  );
 
-  log('info', `Claude CLI로 ${items.length}개 항목 분류 요청`);
+  const participants = [...room.members].join(', ');
+
+  const inputData = JSON.stringify({
+    roomName: room.displayName,
+    roomType: room.roomType,
+    date: dateStr,
+    messageCount: messages.length,
+    participants,
+    messages: cleanMessages,
+  }, null, 2);
+
+  const fullPrompt = promptTemplate
+    .replace('{INPUT}', inputData)
+    .replace('{ROOM_NAME}', room.displayName)
+    .replace('{ROOM_TYPE}', room.roomType)
+    .replace('{DATE}', dateStr)
+    .replace('{MESSAGE_COUNT}', String(messages.length))
+    .replace('{PARTICIPANTS}', participants);
 
   try {
     const result = execFileSync(
@@ -250,123 +361,31 @@ function classifyItems(items) {
       }
     );
 
-    // Claude CLI의 --output-format json 응답 파싱
-    let parsed = extractJsonFromResponse(result);
-
-    if (!parsed) {
-      log('error', 'Claude 응답에서 JSON 추출 실패');
-      log('debug', `Raw response (처음 500자): ${result.slice(0, 500)}`);
-      return [];
-    }
-
-    // --output-format json은 { result: "..." } 형태일 수 있음
-    if (parsed.result && typeof parsed.result === 'string') {
-      parsed = extractJsonFromResponse(parsed.result);
-    }
-
-    if (!Array.isArray(parsed)) {
-      log('warn', '분류 결과가 배열이 아님, 단일 객체를 배열로 변환');
-      parsed = [parsed];
-    }
-
-    log('info', `분류 완료: ${parsed.length}개 항목`);
-    return parsed;
+    return extractMarkdownFromResponse(result);
   } catch (err) {
-    log('error', `Claude CLI 호출 실패: ${err.message}`);
-    return [];
+    log('error', `Claude CLI 호출 실패 (${room.displayName}/${dateStr}): ${err.message}`);
+    return null;
   }
 }
 
 /**
- * 분류 결과를 마크다운 문서로 변환
- * @param {Object} item - 원본 inbox 항목
- * @param {Object} classification - 분류 결과
- * @returns {string} 마크다운 문서
- */
-function generateMarkdown(item, classification) {
-  const fromName = item.from?.name || item.from?.emailAddress?.name || 'Unknown';
-  const fromEmail = item.from?.emailAddress?.address || item.from?.email || '';
-  const itemDate =
-    item.receivedDateTime || item.createdDateTime || new Date().toISOString();
-  const tags = (classification.tags || []).map((t) => `"${t}"`).join(', ');
-
-  // 본문: bodyMarkdown 우선, 없으면 content, body 순
-  const body = item.bodyMarkdown || item.content || item.body?.content || '(본문 없음)';
-
-  // 첨부파일 목록
-  let attachmentsSection = '';
-  if (item.attachments && item.attachments.length > 0) {
-    const attachmentLines = item.attachments
-      .map((a) => `- ${a.name || a.filename || 'unnamed'}`)
-      .join('\n');
-    attachmentsSection = `\n## 첨부파일\n${attachmentLines}\n`;
-  }
-
-  const markdown = `---
-id: "${item.id || classification.id}"
-type: "${item._sourceType || 'unknown'}"
-project: "${classification.project}"
-from: "${fromName}"
-date: "${itemDate}"
-tags: [${tags}]
-importance: "${classification.importance || 'medium'}"
----
-# ${classification.title}
-
-## 요약
-${classification.summary}
-
-## 원문
-${body}
-${attachmentsSection}`;
-
-  return markdown;
-}
-
-/**
- * 마크다운 문서를 프로젝트 디렉토리에 저장
- * @param {string} markdown - 저장할 마크다운 내용
- * @param {Object} classification - 분류 결과
- * @param {Object} item - 원본 항목 (날짜 추출용)
- * @returns {string} 저장된 파일의 상대 경로
- */
-function saveToProject(markdown, classification, item) {
-  const itemDate =
-    item.receivedDateTime || item.createdDateTime || new Date().toISOString();
-  const dateObj = new Date(itemDate);
-  const yearMonth = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}`;
-  const dateStr = itemDate.split('T')[0]; // YYYY-MM-DD
-
-  const projectName = classification.project || '_general';
-  const sanitizedTitle = sanitizeFilename(classification.title || 'untitled');
-  const fileName = `${dateStr}-${sanitizedTitle}.md`;
-
-  const projectDir = join(PROJECTS_DIR, projectName, yearMonth);
-  ensureDir(projectDir);
-
-  const filePath = join(projectDir, fileName);
-  writeFileAtomic(filePath, markdown);
-
-  // KB_ROOT 기준 상대 경로 반환
-  const relativePath = `projects/${projectName}/${yearMonth}/${fileName}`;
-  log('info', `저장: ${relativePath}`);
-  return relativePath;
-}
-
-/**
- * index.json에 새 항목 추가
- * @param {Array} entries - 추가할 엔트리 배열 [{ id, type, project, title, summary, tags, date, path }]
+ * index.json에 새 항목 추가 (room-day 단위)
  */
 function updateIndex(entries) {
   const index = readJsonSafe(INDEX_FILE, {
-    version: 1,
+    version: 2,
     lastUpdated: null,
     entries: [],
   });
 
-  // 기존 ID 목록으로 중복 방지
-  const existingIds = new Set(index.entries.map((e) => e.id));
-  const newEntries = entries.filter((e) => !existingIds.has(e.id));
+  // v1 → v2 마이그레이션: 기존 entries 유지하되 version 업데이트
+  if (index.version === 1) {
+    index.version = 2;
+  }
+
+  // 기존 path 기준으로 중복 방지
+  const existingPaths = new Set(index.entries.map((e) => e.path));
+  const newEntries = entries.filter((e) => !existingPaths.has(e.path));
 
   if (newEntries.length === 0) {
     log('info', 'index.json: 추가할 새 항목 없음');
@@ -382,18 +401,31 @@ function updateIndex(entries) {
 
 /**
  * 일일 다이제스트 생성
- * @param {Array} classifiedItems - 분류된 항목 배열
+ * @param {Array} roomSummaries - [{roomName, roomType, dateStr, path, messageCount, content}]
  */
-function generateDailyDigest(classifiedItems) {
+function generateDailyDigest(roomSummaries) {
+  if (roomSummaries.length === 0) {
+    log('info', '다이제스트 생성 건너뜀: 요약된 방 없음');
+    return;
+  }
+
   const promptTemplate = readFileSync(
     join(PROMPTS_DIR, 'daily-digest.md'),
     'utf-8'
   );
 
-  const fullPrompt = promptTemplate.replace(
-    '{INPUT}',
-    JSON.stringify(classifiedItems, null, 2)
+  const inputData = JSON.stringify(
+    roomSummaries.map((s) => ({
+      roomName: s.roomName,
+      roomType: s.roomType,
+      messageCount: s.messageCount,
+      summary: s.content,
+    })),
+    null,
+    2
   );
+
+  const fullPrompt = promptTemplate.replace('{INPUT}', inputData);
 
   log('info', '일일 다이제스트 생성 중...');
 
@@ -416,17 +448,7 @@ function generateDailyDigest(classifiedItems) {
       }
     );
 
-    // 다이제스트는 마크다운 텍스트, JSON wrapper에서 추출
-    let digestContent = result;
-    try {
-      const parsed = JSON.parse(result);
-      // --output-format json 응답 구조: { result: "..." }
-      if (parsed.result) {
-        digestContent = parsed.result;
-      }
-    } catch {
-      // 이미 마크다운 텍스트일 수 있음
-    }
+    const digestContent = extractMarkdownFromResponse(result);
 
     const today = new Date().toISOString().split('T')[0];
     ensureDir(DAILY_DIR);
@@ -440,7 +462,6 @@ function generateDailyDigest(classifiedItems) {
 
 /**
  * 처리 완료된 inbox 파일 삭제
- * @param {Array} processedItems - 처리된 원본 항목 배열
  */
 function cleanupInbox(processedItems) {
   let cleaned = 0;
@@ -460,7 +481,6 @@ function cleanupInbox(processedItems) {
 
 /**
  * sync-state.json의 processor 섹션 업데이트
- * @param {number} processedCount - 이번에 처리한 항목 수
  */
 function updateSyncState(processedCount) {
   const state = readJsonSafe(SYNC_STATE_FILE, {});
@@ -475,7 +495,7 @@ function updateSyncState(processedCount) {
 // ─── Main ────────────────────────────────────────────────────────────
 
 async function main() {
-  log('info', 'Processor started');
+  log('info', 'Processor v2 started');
   const startTime = Date.now();
 
   // 1. inbox 항목 수집
@@ -492,63 +512,80 @@ async function main() {
     process.exit(0);
   }
 
-  // 2. 배치 단위로 분류
-  let allClassified = [];
-  try {
-    for (let i = 0; i < items.length; i += BATCH_SIZE) {
-      const batch = items.slice(i, i + BATCH_SIZE);
-      const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-      const totalBatches = Math.ceil(items.length / BATCH_SIZE);
-      log('info', `분류 배치 ${batchNum}/${totalBatches} (${batch.length}개 항목)`);
+  // 2. 채팅방별 그룹화
+  const rooms = groupByRoom(items);
 
-      const classified = classifyItems(batch);
-      allClassified.push(...classified);
-    }
-  } catch (err) {
-    log('error', `분류 단계 실패: ${err.message}`);
-    // 분류된 것까지만 계속 처리
-  }
-
-  if (allClassified.length === 0) {
-    log('warn', '분류된 항목이 없습니다. 종료합니다.');
-    process.exit(1);
-  }
-
-  // 3. 마크다운 생성 및 프로젝트에 저장
+  // 3. 각 room-day별 요약 생성
   const indexEntries = [];
+  const roomSummaries = [];
   const processedItems = [];
+  let summarizedCount = 0;
+  let skippedCount = 0;
 
-  for (const classification of allClassified) {
-    // 원본 항목 매칭 (id 기반)
-    const originalItem = items.find((item) => item.id === classification.id);
-    if (!originalItem) {
-      log('warn', `원본 항목을 찾을 수 없음: id=${classification.id}`);
-      continue;
-    }
+  for (const [roomKey, room] of rooms) {
+    for (const [dateStr, messages] of room.dateGroups) {
+      // 요약 필요 여부 판단
+      if (!shouldSummarize(messages)) {
+        log('info', `건너뜀: ${room.displayName}/${dateStr} (${messages.length}건, 내용 부족)`);
+        skippedCount++;
+        processedItems.push(...messages);
+        continue;
+      }
 
-    try {
-      const markdown = generateMarkdown(originalItem, classification);
-      const savedPath = saveToProject(markdown, classification, originalItem);
+      log('info', `요약 중: ${room.displayName}/${dateStr} (${messages.length}건)`);
 
-      // index 엔트리 생성
+      const summaryContent = summarizeRoomDay(room, dateStr, messages);
+      if (!summaryContent) {
+        log('warn', `요약 실패: ${room.displayName}/${dateStr}`);
+        continue;
+      }
+
+      // rooms/{type}/{slug}/{date}.md 저장
+      const roomDir = join(ROOMS_DIR, room.roomType, room.slug);
+      ensureDir(roomDir);
+      const filePath = join(roomDir, `${dateStr}.md`);
+
+      // 기존 파일이 있으면 병합 (같은 날 여러 번 실행 대응)
+      if (existsSync(filePath)) {
+        const existing = readFileSync(filePath, 'utf-8');
+        // 기존 내용을 덮어쓰기 (같은 날의 최신 요약으로 대체)
+        log('info', `기존 파일 덮어쓰기: ${room.roomType}/${room.slug}/${dateStr}.md`);
+      }
+
+      writeFileAtomic(filePath, summaryContent);
+
+      const relativePath = `rooms/${room.roomType}/${room.slug}/${dateStr}.md`;
+      log('info', `저장: ${relativePath}`);
+
+      // index 엔트리
       indexEntries.push({
-        id: classification.id,
-        type: originalItem._sourceType || 'unknown',
-        project: classification.project,
-        title: classification.title,
-        summary: classification.summary,
-        tags: classification.tags || [],
-        date:
-          originalItem.receivedDateTime ||
-          originalItem.createdDateTime ||
-          new Date().toISOString(),
-        path: savedPath,
+        id: `${room.slug}/${dateStr}`,
+        type: room.roomType,
+        room: room.displayName,
+        title: `${room.displayName} - ${dateStr}`,
+        date: dateStr,
+        messageCount: messages.length,
+        path: relativePath,
       });
 
-      processedItems.push(originalItem);
-    } catch (err) {
-      log('error', `항목 처리 실패 (id=${classification.id}): ${err.message}`);
+      // 다이제스트용 요약 수집
+      roomSummaries.push({
+        roomName: room.displayName,
+        roomType: room.roomType,
+        dateStr,
+        messageCount: messages.length,
+        content: summaryContent,
+        path: relativePath,
+      });
+
+      processedItems.push(...messages);
+      summarizedCount++;
     }
+  }
+
+  if (summarizedCount === 0 && skippedCount === 0) {
+    log('warn', '처리된 항목이 없습니다. 종료합니다.');
+    process.exit(1);
   }
 
   // 4. index.json 업데이트
@@ -560,7 +597,7 @@ async function main() {
 
   // 5. 일일 다이제스트 생성
   try {
-    generateDailyDigest(allClassified);
+    generateDailyDigest(roomSummaries);
   } catch (err) {
     log('error', `일일 다이제스트 생성 실패: ${err.message}`);
   }
@@ -583,7 +620,7 @@ async function main() {
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   log(
     'info',
-    `Processor 완료: ${processedItems.length}/${items.length}개 처리, ${elapsed}초 소요`
+    `Processor 완료: ${summarizedCount}개 방 요약, ${skippedCount}개 건너뜀, ${processedItems.length}/${items.length}개 메시지 처리, ${elapsed}초 소요`
   );
 }
 

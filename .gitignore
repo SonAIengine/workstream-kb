@@ -7,7 +7,7 @@ node_modules/
 # Runtime data (personal content)
 .state/
 inbox/
-projects/
+rooms/
 daily/
 archive/
 logs/
@@ -15,6 +15,9 @@ index.json
 
 # Claude Code
 .claude/
+
+# Docsify generated
+_sidebar.md
 
 # Temp files
 *.tmp

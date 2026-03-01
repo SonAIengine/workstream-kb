@@ -13,11 +13,11 @@ Bash로 각 디렉토리의 파일 수 확인:
 - `find ~/workstream-kb/inbox/mail -name "*.json" 2>/dev/null | wc -l`
 - `find ~/workstream-kb/inbox/teams-chat -name "*.json" 2>/dev/null | wc -l`
 - `find ~/workstream-kb/inbox/teams-channel -name "*.json" 2>/dev/null | wc -l`
-- 각 프로젝트 디렉토리의 .md 파일 수
+- 각 rooms/{type}/{slug}/ 디렉토리의 .md 파일 수
 
 ### 3단계: 결과 출력
 
-## 📊 지식 베이스 상태
+## 지식 베이스 상태
 
 ### 동기화 정보
 | 항목 | 마지막 동기화 | 수집 건수 |
@@ -32,12 +32,12 @@ Bash로 각 디렉토리의 파일 수 확인:
 - Teams 채팅: N건
 - Teams 채널: N건
 
-### 프로젝트별 문서 수
-| 프로젝트 | 문서 수 | 최근 업데이트 |
-|---------|---------|-------------|
-| 제주은행 | N건 | {date} |
-| XGEN-2.0 | N건 | {date} |
-| ... | ... | ... |
+### 채팅방별 요약 수
+| 유형 | 채팅방 수 | 요약 문서 수 | 최근 업데이트 |
+|------|----------|-------------|-------------|
+| Teams 채팅 | N개 | M건 | {date} |
+| Teams 채널 | N개 | M건 | {date} |
+| 메일 | N개 | M건 | {date} |
 
 ### 인덱스
 - 총 항목: N건

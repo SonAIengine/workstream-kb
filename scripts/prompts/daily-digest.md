@@ -1,31 +1,44 @@
 # Daily Digest Generation
 
-Organize today's processed items by project and generate a daily digest in Markdown.
+오늘 생성된 채팅방별 요약을 종합하여 일일 다이제스트를 생성합니다.
 
-## Response Format (Markdown)
+## 응답 형식 (Markdown)
 
 ```markdown
 # Daily Digest - {date}
 
-## Summary
-- Total items processed: N (Mail X, Teams Y)
-- By project: ...
+## 요약
+- 채팅방 {N}개, 총 메시지 {M}건 처리
+- 주요 키워드: ...
 
-## Project Details
+## 채팅방별 핵심
 
-### {Project Name 1}
-- **{Title}** (mail/teams) - {summary}
+### {채팅방 이름 1}
+- 핵심 내용 1~3줄 압축
+
+### {채팅방 이름 2}
 - ...
 
-### {Project Name 2}
-- ...
+## 통합 액션 아이템
 
-### Other
-- ...
+| 담당자 | 내용 | 출처 | 기한 |
+|--------|------|------|------|
+| 홍길동 | 작업 내용 | 채팅방명 | 기한 |
 
-## Action Items
-- (Items requiring response or important follow-ups)
+## 통계
+
+| 구분 | 채팅방 수 | 메시지 수 |
+|------|----------|----------|
+| Teams 채팅 | N | M |
+| Teams 채널 | N | M |
+| 메일 | N | M |
+| **합계** | **N** | **M** |
 ```
 
-## Input Data
+## 규칙
+- "주요 논의 없음"인 방은 채팅방별 핵심에서 제외
+- 액션 아이템은 모든 방의 것을 통합, 중복 제거
+- 한국어로 작성
+
+## 입력 데이터
 {INPUT}
