@@ -13,7 +13,7 @@
 
 Auto-collect **Emails** & **Microsoft Teams** messages → AI-generated **daily work report** → searchable **personal knowledge base**
 
-[Getting Started](#quick-start) · [한국어 문서](README.ko.md) · [Contributing](CONTRIBUTING.md) · [Discussions](https://github.com/SonAIengine/workstream-kb/discussions)
+[Getting Started](#-getting-started) · [한국어 문서](README.ko.md) · [Contributing](CONTRIBUTING.md) · [Discussions](https://github.com/SonAIengine/workstream-kb/discussions)
 
 </div>
 
@@ -87,6 +87,205 @@ The AI-generated daily report includes:
 | **Schedule** | Split into personal vs team schedule |
 | **Attachments** | Email attachments downloaded and linked inline |
 
+## Prerequisites
+
+Before starting, make sure you have these installed and configured:
+
+| Requirement | Why | Install Guide |
+|-------------|-----|---------------|
+| **Node.js 20+** | Runtime for fetcher & processor | [nodejs.org](https://nodejs.org/) or `nvm install 20` |
+| **Claude Code CLI** | AI report generation (processor) | [docs.anthropic.com](https://docs.anthropic.com/en/docs/claude-code/overview) |
+| **MS 365 MCP Server** | OAuth token for MS Graph API | [GitHub](https://github.com/softeria-eu/ms-365-mcp-server) |
+| **Docker** *(optional)* | Run the Docsify report viewer | [docker.com](https://docs.docker.com/get-docker/) |
+
+### Setting Up MS 365 MCP Server
+
+This is the most important prerequisite. WorkStream KB **shares** the token cache from MS 365 MCP Server, so you don't need a separate OAuth flow.
+
+```bash
+# 1. Install the MCP server (follow the repo's README for full details)
+#    https://github.com/softeria-eu/ms-365-mcp-server
+
+# 2. Launch and log in with your Microsoft 365 account
+#    The server will create these token files:
+#      ~/.config/ms-365-mcp/.token-cache.json
+#      ~/.config/ms-365-mcp/.selected-account.json
+
+# 3. Verify the token files exist
+ls ~/.config/ms-365-mcp/.token-cache.json
+ls ~/.config/ms-365-mcp/.selected-account.json
+```
+
+> **Note**: If your token cache is stored in a different location, set `MS365_TOKEN_CACHE_PATH` and `MS365_SELECTED_ACCOUNT_PATH` in `.env`.
+
+### Setting Up Claude Code CLI
+
+```bash
+# Install Claude Code CLI
+npm install -g @anthropic-ai/claude-code
+
+# Verify installation
+which claude        # e.g., /usr/local/bin/claude
+claude --version
+
+# Make sure you have an active Anthropic subscription
+claude              # Should start an interactive session
+```
+
+> **Note**: If `claude` is installed in a non-standard path, set `CLAUDE_CLI_PATH` in `.env`.
+
+---
+
+## Getting Started
+
+### Step 1: Clone & Install
+
+```bash
+git clone https://github.com/SonAIengine/workstream-kb.git
+cd workstream-kb
+cd scripts && npm install && cd ..
+```
+
+### Step 2: Configure Environment
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` with your settings:
+
+```bash
+# REQUIRED: Set KB_ROOT to the absolute path of your workstream-kb directory
+KB_ROOT=~/projects/workstream-kb      # Use absolute path or ~
+
+# REQUIRED: Set your display name (used to split "my" vs "others'" action items)
+MY_DISPLAY_NAME=John Doe
+
+# REQUIRED: Path to Claude CLI
+CLAUDE_CLI_PATH=/usr/local/bin/claude  # Check with: which claude
+
+# OPTIONAL: Adjust data start date (won't fetch data before this date)
+DATA_START_DATE=2026-02-01
+
+# Everything else can stay at defaults — see .env.example for full reference
+```
+
+### Step 3: Test Manually
+
+```bash
+# Collect emails & Teams messages
+node scripts/fetcher.mjs
+
+# Check if data was collected
+ls inbox/mail/           # Should show .json files
+ls inbox/teams-chat/     # Should show .json files
+
+# Generate a daily report (requires data in inbox/)
+node scripts/processor.mjs
+
+# Check the report
+ls daily/                # Should show {date}.md
+cat daily/$(date +%Y-%m-%d).md
+```
+
+### Step 4: Set Up Scheduling
+
+Choose **one** of the following based on your OS:
+
+#### Linux (cron)
+
+```bash
+crontab -e
+```
+
+Add these lines (adjust paths to match your setup):
+
+```cron
+# WorkStream KB - Fetcher: every 30 minutes
+*/30 * * * * /usr/bin/node /path/to/workstream-kb/scripts/fetcher.mjs >> /path/to/workstream-kb/logs/fetcher-cron.log 2>&1
+
+# WorkStream KB - Processor: daily at 07:00
+0 7 * * * /usr/bin/node /path/to/workstream-kb/scripts/processor.mjs >> /path/to/workstream-kb/logs/processor-cron.log 2>&1
+```
+
+> **Tip**: Use `which node` to find the exact node path. Create the `logs/` directory first: `mkdir -p /path/to/workstream-kb/logs`
+
+#### macOS (launchd)
+
+```bash
+# Copy plist files
+cp config/com.kb.fetcher.plist ~/Library/LaunchAgents/
+cp config/com.kb.processor.plist ~/Library/LaunchAgents/
+
+# Edit paths in plist files to match your setup, then load:
+launchctl load ~/Library/LaunchAgents/com.kb.fetcher.plist
+launchctl load ~/Library/LaunchAgents/com.kb.processor.plist
+```
+
+### Step 5: View Reports
+
+#### Option A: Docker (recommended)
+
+```bash
+# Generate sidebar first
+cd scripts && npm run sidebar && cd ..
+
+# Start the viewer
+docker compose up -d
+
+# Open in browser
+open http://localhost:3939   # macOS
+xdg-open http://localhost:3939  # Linux
+```
+
+#### Option B: Local (npx serve)
+
+```bash
+cd scripts && npm run viewer
+# Opens at http://localhost:3000
+```
+
+> **Note**: Run `npm run sidebar` after processor generates new reports to update the sidebar navigation.
+
+### Step 6: Claude Code Slash Commands (optional)
+
+If you use [Claude Code](https://docs.anthropic.com/en/docs/claude-code), you can install slash commands for quick KB interaction:
+
+```bash
+mkdir -p ~/.claude/commands
+cp config/kb-search.md config/kb-sync.md config/kb-status.md ~/.claude/commands/
+```
+
+| Command | Description |
+|---------|-------------|
+| `/kb-search {keywords}` | Search the knowledge base |
+| `/kb-sync` | Manually trigger fetcher + processor |
+| `/kb-status` | View sync status and report stats |
+
+---
+
+## Configuration Reference
+
+All settings are in `.env`. See `.env.example` for defaults.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KB_ROOT` | `~/workstream-kb` | Root directory of this project (absolute path or `~`) |
+| `CLAUDE_CLI_PATH` | `/usr/local/bin/claude` | Absolute path to Claude CLI binary |
+| `MY_DISPLAY_NAME` | `손성준` | Your display name (for action item categorization) |
+| `MS365_CLIENT_ID` | `084a3e9f-...` | MS 365 MCP Server client ID (usually unchanged) |
+| `MS365_TOKEN_CACHE_PATH` | `~/.config/ms-365-mcp/.token-cache.json` | MSAL token cache path |
+| `MS365_SELECTED_ACCOUNT_PATH` | `~/.config/ms-365-mcp/.selected-account.json` | Selected account path |
+| `MS365_SCOPES` | `Mail.ReadWrite,...` | MS Graph API scopes |
+| `MAIL_FETCH_LIMIT` | `50` | Max emails per fetch cycle |
+| `TEAMS_CHAT_LIMIT` | `30` | Max Teams chats per fetch cycle |
+| `TEAMS_MESSAGE_LIMIT` | `20` | Max messages per chat |
+| `ATTACHMENT_MAX_SIZE_MB` | `10` | Skip attachments larger than this |
+| `INITIAL_FETCH_DAYS` | `7` | Days to look back on first run |
+| `DATA_START_DATE` | `2026-02-01` | Ignore data before this date |
+| `ARCHIVE_AFTER_MONTHS` | `6` | Move data older than N months to `archive/` |
+| `CLAUDE_TIMEOUT_MS` | `180000` | Claude CLI timeout (ms) |
+
 ## Project Structure
 
 ```
@@ -123,90 +322,6 @@ workstream-kb/
 └── index.json                  # Search index (gitignored)
 ```
 
-## Prerequisites
-
-- **Node.js 20+** (nvm recommended)
-- **[Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)** with active subscription
-- **[MS 365 MCP Server](https://github.com/softeria-eu/ms-365-mcp-server)** configured and logged in
-- **macOS** for launchd scheduling (Linux: use cron/systemd)
-
-## Quick Start
-
-### 1. Clone and install
-
-```bash
-git clone https://github.com/SonAIengine/workstream-kb.git
-cd workstream-kb/scripts && npm install
-```
-
-### 2. Configure
-
-```bash
-cp .env.example .env
-# Edit .env with your settings
-```
-
-### 3. Ensure MS365 token exists
-
-```bash
-ls ~/.config/ms-365-mcp/.token-cache.json
-ls ~/.config/ms-365-mcp/.selected-account.json
-```
-
-### 4. Run manually
-
-```bash
-node scripts/fetcher.mjs      # Collect emails & Teams messages
-node scripts/processor.mjs     # Generate daily report
-```
-
-### 5. View reports
-
-```bash
-# Option A: Docker (recommended)
-docker-compose up -d
-open http://localhost:3939
-
-# Option B: Local
-cd scripts && npm run viewer
-open http://localhost:3000
-```
-
-### 6. Automate (macOS launchd)
-
-```bash
-cp config/com.kb.fetcher.plist ~/Library/LaunchAgents/
-cp config/com.kb.processor.plist ~/Library/LaunchAgents/
-# Edit paths in plist files, then:
-launchctl load ~/Library/LaunchAgents/com.kb.fetcher.plist
-launchctl load ~/Library/LaunchAgents/com.kb.processor.plist
-```
-
-### 7. Claude Code slash commands (optional)
-
-```bash
-mkdir -p ~/.claude/commands
-cp config/kb-search.md config/kb-sync.md config/kb-status.md ~/.claude/commands/
-```
-
-| Command | Description |
-|---------|-------------|
-| `/kb-search {keywords}` | Search the knowledge base |
-| `/kb-sync` | Manually trigger fetcher + processor |
-| `/kb-status` | View sync status and report stats |
-
-## Configuration
-
-All settings are in `.env`. See `.env.example` for full reference.
-
-| Category | Key Variables |
-|----------|--------------|
-| **Auth** | `MS365_CLIENT_ID`, `MS365_TOKEN_CACHE_PATH` |
-| **Paths** | `KB_ROOT`, `CLAUDE_CLI_PATH` |
-| **Fetcher** | `MAIL_FETCH_LIMIT` (50), `TEAMS_CHAT_LIMIT` (30), `ATTACHMENT_MAX_SIZE_MB` (10) |
-| **Processor** | `CLAUDE_TIMEOUT_MS` (900000), `MY_DISPLAY_NAME` |
-| **Retention** | `DATA_START_DATE`, `ARCHIVE_AFTER_MONTHS` (6) |
-
 ## Docsify Viewer
 
 The built-in viewer renders daily reports in a browser with full-text search.
@@ -215,7 +330,9 @@ The built-in viewer renders daily reports in a browser with full-text search.
 
 **Docker** (nginx, recommended for stable file downloads):
 ```bash
-docker-compose up -d    # http://localhost:3939
+# First time: generate sidebar
+cd scripts && npm run sidebar && cd ..
+docker compose up -d    # http://localhost:3939
 ```
 
 **Local** (npx serve):
@@ -225,33 +342,42 @@ cd scripts && npm run viewer    # http://localhost:3000
 
 ## Customization
 
-### Report prompt
+### Report Prompt
 
 Edit `scripts/prompts/daily-report.md` to customize report format, sections, and AI instructions.
 
 ### Schedule
 
-- **Fetcher interval**: `StartInterval` in `com.kb.fetcher.plist` (seconds, default 1800)
-- **Processor time**: `Hour`/`Minute` in `com.kb.processor.plist` (default 07:00)
+- **Fetcher interval**: Adjust cron schedule (default: `*/30 * * * *` = every 30 min)
+- **Processor time**: Adjust cron schedule (default: `0 7 * * *` = daily at 07:00)
+- **macOS**: Edit `StartInterval` / `Hour`+`Minute` in the plist files
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
+| `ENOENT: .token-cache.json` | MS365 MCP Server not set up | Install and log in to [MS 365 MCP Server](https://github.com/softeria-eu/ms-365-mcp-server) |
 | Auth error (exit code 2) | MS365 token expired | Re-login via MS365 MCP Server |
-| Empty inbox after fetch | Sync state issue | Check `.state/sync-state.json` |
-| Processor timeout | Too many messages / slow model | Increase `CLAUDE_TIMEOUT_MS` in `.env` |
-| Report missing on failure | Claude CLI error | Inbox is preserved on failure; re-run processor |
-| Attachment download stuck | Docker/Colima network | Use local serve (`npm run viewer`) or add `::1 kb.local` to `/etc/hosts` |
+| Empty inbox after fetch | Sync state issue or no new messages | Delete `.state/sync-state.json` and retry |
+| `claude: command not found` | Claude CLI not installed or wrong path | Install Claude Code CLI, set `CLAUDE_CLI_PATH` in `.env` |
+| Processor timeout | Too many messages or slow model | Increase `CLAUDE_TIMEOUT_MS` in `.env` (default: 180000 = 3 min) |
+| Report missing after failure | Claude CLI error | Inbox is preserved on failure; re-run `node scripts/processor.mjs` |
+| Docker viewer shows blank page | Sidebar not generated | Run `cd scripts && npm run sidebar` first |
+| Attachment download fails in Docker | nginx config issue | Check that `daily/` volume is mounted correctly in `docker-compose.yml` |
+| Fetcher fetches old data | `DATA_START_DATE` not set | Set `DATA_START_DATE` in `.env` to your desired start date |
 
-## Adapting to Linux
+### Checking Logs
 
 ```bash
-crontab -e
-# Fetcher: every 30 minutes
-*/30 * * * * /path/to/node /path/to/scripts/fetcher.mjs >> /path/to/logs/fetcher.log 2>&1
-# Processor: daily at 07:00
-0 7 * * * /path/to/node /path/to/scripts/processor.mjs >> /path/to/logs/processor.log 2>&1
+# Fetcher logs
+tail -f logs/fetcher-cron.log
+
+# Processor logs (dated)
+ls logs/                         # Find today's log
+tail -f logs/$(date +%Y-%m-%d).log
+
+# Sync state
+cat .state/sync-state.json
 ```
 
 ## License

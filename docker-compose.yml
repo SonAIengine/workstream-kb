@@ -1,9 +1,13 @@
 services:
   viewer:
     build: .
-    container_name: workstream-kb
+    container_name: workstream-kb-viewer
     ports:
-      - "3939:3000"
+      - "3939:80"
     volumes:
-      - .:/kb:ro
+      - ./index.html:/usr/share/nginx/html/index.html:ro
+      - ./homepage.md:/usr/share/nginx/html/homepage.md:ro
+      - ./serve.json:/usr/share/nginx/html/serve.json:ro
+      - ./daily:/usr/share/nginx/html/daily:ro
+      - ./_sidebar.md:/usr/share/nginx/html/_sidebar.md:ro
     restart: unless-stopped
